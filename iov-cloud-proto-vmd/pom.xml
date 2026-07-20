@@ -11,8 +11,8 @@
   </parent>
 
   <groupId>net.hwyz.iov.cloud.proto</groupId>
-  <artifactId>iov-cloud-proto-vmd</artifactId>
-  <name>iov-cloud-proto-vmd</name>
+  <artifactId>proto-vmd</artifactId>
+  <name>Proto VMD</name>
   <description>VMD Protobuf Contracts - Software Inventory</description>
 
   <dependencies>
