@@ -1,0 +1,12 @@
+# Domain-based ownership for iov-cloud-parent-proto
+# Each domain team owns their submodule directory.
+# Platform team maintains the root config and parent POM.
+
+# Platform team
+/pom.xml                                 @open-iov/platform
+/buf.yaml                                @open-iov/platform
+/buf.gen.yaml                            @open-iov/platform
+/CODEOWNERS                              @open-iov/platform
+
+# VMD domain - Vehicle Management & Diagnostics
+/iov-cloud-proto-vmd/                    @open-iov/vmd-team

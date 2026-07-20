@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package iov.vmd.swinv.v1;
+
+option java_multiple_files = true;
+option java_package = "net.hwyz.iov.cloud.proto.vmd.swinv.v1";
+option java_outer_classname = "SoftwareInventoryProto";
+
+// Upstream: Vehicle-side software inventory self-report (payload, transparently transmitted via VAGW Envelope as bytes)
+message SoftwareInventoryReport {
+  // Vehicle-side monotonically increasing version -> sourceVersion
+  uint64 manifest_version = 1;
+
+  // Vehicle-side collection timestamp (ms, UTC) -> occurredAt
+  int64 collected_at = 2;
+
+  ReportReason reason = 3;
+
+  // true = full snapshot / false = incremental
+  bool full_snapshot = 4;
+
+  repeated SoftwareItem items = 5;
+}
+
+message SoftwareItem {
+  string vehicle_node_code = 1;
+
+  string software_target_code = 2;
+
+  string software_part_no = 3;
+
+  string software_version = 4;
+
+  string slot = 5;
+
+  string digest = 6;
+
+  ChangeType change_type = 7;
+}
+
+enum ReportReason {
+  REPORT_REASON_UNSPECIFIED = 0;
+  BOOT = 1;
+  PERIODIC = 2;
+  POST_OTA = 3;
+  POST_REPAIR = 4;
+  DIAG_TRIGGERED = 5;
+}
+
+enum ChangeType {
+  CHANGE_TYPE_UNSPECIFIED = 0;
+  INITIAL = 1;
+  UPGRADE = 2;
+  ROLLBACK = 3;
+  REFLASH = 4;
+  REPAIR = 5;
+}

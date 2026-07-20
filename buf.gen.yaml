@@ -1,0 +1,15 @@
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: java_package_prefix
+      value: net.hwyz.iov.cloud.proto
+plugins:
+  - remote: buf.build/protocolbuffers/java
+    out: gen/java
+    opt:
+      - lite
+  - remote: buf.build/grpc/java
+    out: gen/grpc-java
+    opt:
+      - lite
