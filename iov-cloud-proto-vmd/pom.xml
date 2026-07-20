@@ -7,11 +7,12 @@
   <parent>
     <groupId>net.hwyz.iov.cloud.parent</groupId>
     <artifactId>proto</artifactId>
-    <version>1.0.0</version>
+    <version>0.0.1-SNAPSHOT</version>
   </parent>
 
   <groupId>net.hwyz.iov.cloud.proto</groupId>
   <artifactId>proto-vmd</artifactId>
+  <version>0.0.1-SNAPSHOT</version>
   <name>Proto VMD</name>
   <description>VMD Protobuf Contracts - Software Inventory</description>
 
