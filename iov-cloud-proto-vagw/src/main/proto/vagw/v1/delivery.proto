@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package vagw.v1;
+
+// =============================================================================
+// vagw.v1 delivery - VAGW 云内技术投递状态 (EDD-VAGW-DSN-CR-006 / PAR-PROTO-DSN-CR-003)
+// =============================================================================
+// 本文件是 VAGW 云内跨服务技术契约（SSOT），非车云边界 Envelope、非 FOTA 业务消息。
+//   * 由 VAGW 在不可投递时生产到 iov.vagw.delivery.fota，IOV-OTA 消费；Key = VIN。
+//   * 只进入 iov.vagw.delivery.fota，不得进入 iov.vagw.up/down.fota 或 vehicle.* Topic。
+//   * 不 import / 复制 / 重新发布 VehicleMessageEnvelope、MessageKind、TraceContext
+//     或任何 vehicle.fota.v1 消息；不注册为 vehicle.fota.v1.<MessageName> PayloadType。
+// 字段号 1–9、枚举值 0–3 自首个 release 起稳定；删除或改名后必须 reserved，不得复用。
+// optional presence 必须在 Java 生成、DescriptorSet 与兼容测试中保留。
+// =============================================================================
+
+// 技术投递状态（VAGW 云内跨服务契约，非车云边界、非 FOTA 业务消息）。
+// 由 VAGW 在不可投递时生产到 iov.vagw.delivery.fota，IOV-OTA 消费；不进入 iov.vagw.up/down.fota。
+message GatewayDeliveryStatus {
+  string original_message_id = 1;   // 原 FOTA 传输消息 message_id
+  optional string correlation_id = 2;
+  string vin = 3;                   // 敏感标识，仅协议承载，不进日志原文
+  string stage = 4;                 // 技术阶段，如 DOWNLINK_RECEIVED / MQTT_PUBLISHED
+  Outcome outcome = 5;
+  string reason = 6;                // 如 VEHICLE_OFFLINE / VIN_UNBOUND / MESSAGE_EXPIRED / MQTT_PUBLISH_FAILED
+  bool retryable = 7;
+  optional int64 retry_after_ms = 8;
+  int64 occurred_at_ms = 9;
+}
+
+enum Outcome {
+  OUTCOME_UNSPECIFIED = 0;
+  OUTCOME_ACCEPTED = 1;   // 仅表示 VAGW/MQTT 技术接管，不表示 FOTA 业务成功
+  OUTCOME_REJECTED = 2;
+  OUTCOME_UNKNOWN = 3;
+}

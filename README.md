@@ -8,7 +8,7 @@ This repository is the single source of truth (SSOT) for cloud-side Protobuf con
 
 - **Contract SSOT**: Eliminates cross-repo proto copy-paste drift
 - **Federated Ownership**: Domain teams own their payload via CODEOWNERS
-- **Per-Domain Artifacts**: Services depend on domain-specific artifacts (e.g., `proto-vmd`, `proto-vehicle-common`, `proto-fota`), avoiding forced cross-domain upgrades
+- **Per-Domain Artifacts**: Services depend on domain-specific artifacts (e.g., `proto-vmd`, `proto-vehicle-common`, `proto-fota`, `proto-vagw`), avoiding forced cross-domain upgrades
 - **Compatibility Governance**: CI enforces backward compatibility via `buf lint` + `buf breaking`
 - **Bootstrap & Authority Cutover**: `vehicle.common.v1` / `vehicle.fota.v1` were imported once from the frozen VEH-PROTO snapshot (see `provenance/vehicle-proto-baseline.yaml`). After cutover, PAR-PROTO is the canonical IDL authority; VEH-PROTO consumes released source / DescriptorSet and only pins compatible versions (**one-way: PAR-PROTO → VEH-PROTO**)
 
@@ -25,14 +25,17 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 │   └── vehicle-proto-baseline.yaml         # Donor freeze manifest + authority cutover record
 ├── descriptors/
 │   ├── vehicle-common-v1.pb                # Normalized FileDescriptorSet (common)
-│   └── vehicle-fota-v1.pb                  # Normalized FileDescriptorSet (fota)
+│   ├── vehicle-fota-v1.pb                  # Normalized FileDescriptorSet (fota)
+│   └── vagw-delivery-v1.pb                 # Normalized FileDescriptorSet (vagw cloud-internal)
 │
 ├── iov-cloud-proto-vmd/                    # artifactId=proto-vmd, package iov.vmd.swinv.v1
 │   └── src/main/proto/iov/vmd/swinv/v1/software_inventory.proto
 ├── iov-cloud-proto-vehicle-common/         # artifactId=proto-vehicle-common, package vehicle.common.v1
 │   └── src/main/proto/vehicle/common/v1/envelope.proto
-└── iov-cloud-proto-fota/                   # artifactId=proto-fota, package vehicle.fota.v1
-    └── src/main/proto/vehicle/fota/v1/*.proto
+├── iov-cloud-proto-fota/                   # artifactId=proto-fota, package vehicle.fota.v1
+│   └── src/main/proto/vehicle/fota/v1/*.proto
+└── iov-cloud-proto-vagw/                   # artifactId=proto-vagw, package vagw.v1 (cloud-internal)
+    └── src/main/proto/vagw/v1/delivery.proto
 ```
 
 ## Modules
@@ -42,6 +45,7 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 | iov-cloud-proto-vmd | `proto-vmd` | `iov.vmd.swinv.v1` | VMD domain - Software Inventory Report |
 | iov-cloud-proto-vehicle-common | `proto-vehicle-common` | `vehicle.common.v1` | Vehicle Cloud Boundary Envelope (`VehicleMessageEnvelope`, fields 1–16, payload=10) |
 | iov-cloud-proto-fota | `proto-fota` | `vehicle.fota.v1` | FOTA contracts (TaskCheck / Consent / DownloadGrant / StageResult / InstallPermit / ExecutionEvent / Control / FinalResult / Log / Reconcile / Policy) |
+| iov-cloud-proto-vagw | `proto-vagw` | `vagw.v1` | VAGW cloud-internal technical delivery status (`GatewayDeliveryStatus`, topic `iov.vagw.delivery.fota`) — not a vehicle-boundary contract |
 
 ## Conventions
 
@@ -51,7 +55,8 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 - **Cloud-internal package**: `iov.<domain>.<service>.v<major>` (e.g., vmd)
 - **Vehicle-cloud-boundary package**: `vehicle.common.v1` / `vehicle.fota.v1` — must NOT be rewritten to `iov.*`
 - **Directory = Package**: e.g., `iov-cloud-proto-fota/src/main/proto/vehicle/fota/v1/`
-- **Dependency**: `proto-fota` → `proto-vehicle-common`; VAGW → common; IOV-OTA → common + fota
+- **Cloud-internal package**: `vagw.v1` — `proto-vagw` publishes `vagw.v1.Delivery.GatewayDeliveryStatus` only for `iov.vagw.delivery.fota` (Key=VIN); it MUST NOT wrap/import/duplicate `VehicleMessageEnvelope` or any `vehicle.fota.v1` message and MUST NOT be registered as a vehicle-boundary PayloadType
+- **Dependency**: `proto-fota` → `proto-vehicle-common`; VAGW → common + `proto-vagw`; IOV-OTA → common + fota + `proto-vagw`
 
 ## Bootstrap & Authority Model
 
@@ -68,6 +73,7 @@ mvn clean compile
 # Compile specific module
 mvn clean compile -pl iov-cloud-proto-vehicle-common -am
 mvn clean compile -pl iov-cloud-proto-fota -am
+mvn clean compile -pl iov-cloud-proto-vagw -am
 ```
 
 ## Governance

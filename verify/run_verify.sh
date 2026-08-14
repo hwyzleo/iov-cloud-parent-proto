@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_verify.sh — PAR-PROTO-DSN-CR-002 verification harness
+# run_verify.sh — PAR-PROTO-DSN-CR-002 + PAR-PROTO-DSN-CR-003 verification harness
 #
-# Reproduces the release gates (design §5 / §11) that can be run in this repo:
+# Reproduces the release gates (design §5 / §11 + CR-003 §6 / §9) runnable here:
 #   1. Maven reactor build (Java generation)            — gate 5 (Java)
-#   2. buf lint on vehicle-common + fota modules         — gate 1
+#   2. buf lint on vehicle-common + fota + vagw modules — gate 1
 #   3. Donor parity (imported sources == donor snapshot) — acceptance #1
 #   4. Provenance SHA-256 vs committed sources/descriptors — gate 9
-#   5. Descriptor determinism (regenerate + compare)     — gate 3
+#   5. Descriptor determinism (regenerate + compare)     — gate 3 (incl. vagw)
 #   6. PayloadType registry ↔ descriptor full-name        — gate 8
 #   7. Java golden producer (reference bytes)             — cross-language contract
 #      (C++ generation + byte-identical round-trip is validated on the
 #       VEH-PROTO/vehicle side from the released DescriptorSet)
+#   8. VAGW contract check + golden producer (CR-003)     — gates 2/3, acceptance #1/#2/#3
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -23,14 +24,14 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/7] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/8] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
 # ---- 1. Maven reactor build (Java generation) ------------------------------
 step 1 "Maven reactor build (Java generation)"
 if mvn -q clean install -DskipTests >/dev/null 2>&1; then
-  pass "mvn clean install (proto-vmd, proto-vehicle-common, proto-fota)"
+  pass "mvn clean install (proto-vmd, proto-vehicle-common, proto-fota, proto-vagw)"
 else
   fail "mvn clean install"
 fi
@@ -39,10 +40,11 @@ fi
 step 2 "buf lint (STANDARD) on new modules"
 if command -v buf >/dev/null 2>&1; then
   if buf lint iov-cloud-proto-vehicle-common/src/main/proto >/dev/null 2>&1 \
-     && buf lint iov-cloud-proto-fota/src/main/proto >/dev/null 2>&1; then
-    pass "buf lint common + fota"
+     && buf lint iov-cloud-proto-fota/src/main/proto >/dev/null 2>&1 \
+     && buf lint iov-cloud-proto-vagw/src/main/proto >/dev/null 2>&1; then
+    pass "buf lint common + fota + vagw"
   else
-    fail "buf lint common + fota"
+    fail "buf lint common + fota + vagw"
   fi
 else
   echo "  (buf not installed — gate enforced in CI)"
@@ -80,6 +82,13 @@ shasum -a 256 \
 grep -q "6fada5b9d495def3825bea39c06c4989a2c8aae5c04c7eb87a38c9a7202c3741" /tmp/cr002_checksums.txt && pass "common source sha256 matches manifest" || fail "common source sha256 mismatch"
 grep -q "4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200" /tmp/cr002_checksums.txt && pass "common descriptor sha256 matches manifest" || fail "common descriptor sha256 mismatch"
 grep -q "56924c848d767e5e2c0cde20a1831208ab5d416035dd83ccd8354d6742a9008e" /tmp/cr002_checksums.txt && pass "fota descriptor sha256 matches manifest" || fail "fota descriptor sha256 mismatch"
+# ---- CR-003: vagw source + descriptor (cloud_artifacts section) -----------
+shasum -a 256 \
+  iov-cloud-proto-vagw/src/main/proto/vagw/v1/delivery.proto \
+  descriptors/vagw-delivery-v1.pb \
+  > /tmp/cr003_checksums.txt
+grep -q "d954d4661bf9d284a367eb01117550154368c5c91e90466158d82b43724b76db" /tmp/cr003_checksums.txt && pass "vagw source sha256 matches manifest" || fail "vagw source sha256 mismatch"
+grep -q "556e3a3d3916e65ce03e392440911d5d01ae899d61777cd8a7b8e84679c913d7" /tmp/cr003_checksums.txt && pass "vagw descriptor sha256 matches manifest" || fail "vagw descriptor sha256 mismatch"
 
 # ---- 5. Descriptor determinism ---------------------------------------------
 step 5 "DescriptorSet determinism (regenerate + compare)"
@@ -93,6 +102,9 @@ if [ -x "$PROTOC" ]; then
     vehicle/fota/v1/types.proto vehicle/fota/v1/task.proto vehicle/fota/v1/consent.proto \
     vehicle/fota/v1/package.proto vehicle/fota/v1/execution.proto vehicle/fota/v1/log.proto \
     vehicle/fota/v1/reconcile.proto vehicle/fota/v1/policy.proto
+  "$PROTOC" -I iov-cloud-proto-vagw/src/main/proto \
+    --descriptor_set_out=/tmp/vagw-regenerated.pb --include_imports \
+    vagw/v1/delivery.proto
   if cmp -s /tmp/common-regenerated.pb descriptors/vehicle-common-v1.pb; then
     pass "common descriptor deterministic"
   else
@@ -102,6 +114,11 @@ if [ -x "$PROTOC" ]; then
     pass "fota descriptor deterministic"
   else
     fail "fota descriptor non-deterministic"
+  fi
+  if cmp -s /tmp/vagw-regenerated.pb descriptors/vagw-delivery-v1.pb; then
+    pass "vagw descriptor deterministic"
+  else
+    fail "vagw descriptor non-deterministic"
   fi
 else
   echo "  (pinned protoc 3.25.5 not cached — run 'mvn compile' first)"
@@ -132,6 +149,22 @@ if [ -f "$PB_JAR" ]; then
     GoldenProducer
   pass "Java golden reference bytes produced (envelope_taskcheck / unknown_field / unknown_enum)"
   shasum -a 256 verify/golden/expected/*.bin
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 8. VAGW contract check + golden producer (CR-003) --------------------
+step 8 "VAGW contract + golden (gate 2/3, acceptance #1/#2/#3)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-vagw/target/classes" -d verify/out verify/VagwContractCheck.java
+  java -cp "$PB_JAR:iov-cloud-proto-vagw/target/classes:verify/out" VagwContractCheck descriptors/vagw-delivery-v1.pb
+
+  mkdir -p verify/golden/expected verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-vagw/target/classes" -d verify/out verify/VagwGoldenProducer.java
+  java -cp "$PB_JAR:iov-cloud-proto-vagw/target/classes:verify/out" VagwGoldenProducer
+  pass "vagw golden reference bytes produced (accepted / rejected / unknown / unknown_field / unknown_enum)"
+  shasum -a 256 verify/golden/expected/vagw_delivery_*.bin
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi

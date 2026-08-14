@@ -79,6 +79,47 @@ golden_reference:
       sha256: b5a73b164b176d92086e4f4976822a9c44bdb4ecaf0e9d110111147a75d23b6f
       bytes: 307
 
+# ---- Cloud-internal artifacts (PAR-PROTO-DSN-CR-003) ---------------------
+# Independent cloud-artifact section for proto-vagw. This section is isolated
+# from the common/fota donor freeze above: it MUST NOT overwrite the donor
+# revision, common/fota descriptor hashes or authority provenance. The
+# GatewayDeliveryStatus contract is NOT a vehicle-cloud-boundary message and
+# is NOT registered in the payload_type_registry below.
+cloud_artifacts:
+  vagw_delivery_status:
+    module: iov-cloud-proto-vagw
+    coordinates: net.hwyz.iov.cloud.proto:proto-vagw:0.0.1-SNAPSHOT
+    proto_file: vagw/v1/delivery.proto
+    proto_sha256: d954d4661bf9d284a367eb01117550154368c5c91e90466158d82b43724b76db
+    descriptor_set: descriptors/vagw-delivery-v1.pb
+    descriptor_sha256: 556e3a3d3916e65ce03e392440911d5d01ae899d61777cd8a7b8e84679c913d7
+    topic: iov.vagw.delivery.fota
+    kafka_key: VIN
+    producer: VAGW
+    consumer: IOV-OTA
+    runtime_dependency: protobuf-java
+    # Java-produced regression reference bytes (VAGW/IOV-OTA consume the SAME
+    # artifact; cross-service byte consistency is by construction).
+    golden_reference:
+      producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+      location: verify/golden/expected/
+      files:
+        vagw_delivery_accepted.bin:
+          sha256: 5b9ef11433994784b57ec5a8bd363d9504bf024ea8677d83e686b607030e826d
+          bytes: 67
+        vagw_delivery_rejected.bin:
+          sha256: f849e265cf9544e8a22ba3f03ddde1e3c9efedea7ef9cd4c97fe375efb265ebf
+          bytes: 76
+        vagw_delivery_unknown.bin:
+          sha256: 60a26ffaf9cd593eab5bfaa87b9f8b4414c1208eb4900971fe7df53a1c966ab0
+          bytes: 88
+        vagw_delivery_unknown_field.bin:
+          sha256: 43019706519566e127e2e87bc1dca00aad6ebab5d148ee3b15bdd5ac404a3ea9
+          bytes: 71
+        vagw_delivery_unknown_enum.bin:
+          sha256: 15180d9051806bb8f7cf3977cd61e7ff1fe274c970780b0ea864ba8f6c9bb08b
+          bytes: 68
+
 # ---- PayloadType registry (payload_type = vehicle.fota.v1.<MessageName>) ---
 # Class full-name in generated Java = payload_type string (acceptance §8).
 payload_type_registry:
