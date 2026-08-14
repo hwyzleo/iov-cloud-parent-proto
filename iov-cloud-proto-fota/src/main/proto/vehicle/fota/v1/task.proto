@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 task - 升级任务检测 (VEH-PROTO §6.3)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/task.proto 逐项一致。
+// inventory_mode=FULL 时 ecu_list 必须非空；DIGEST 只有云端已有同 VIN、
+// revision、算法和摘要匹配的完整清单时才能 ACCEPTED。
+// inventory_disposition!=ACCEPTED 时不得消费任务；有任务时 task、
+// availability_status 和 vehicle_task_status 条件必填。
+// strategy 在 v1 暂以版本化 Protobuf bytes 承载，不得使用 JSON。
+// =============================================================================
+
+// 任务检测请求。
+message TaskCheckRequest {
+  string baseline_code = 1;
+  string fota_master_version = 2;            // FOTA Master 版本（替代旧契约的 master 版本字段）
+  optional string local_vehicle_task_id = 3;
+  optional uint64 local_task_revision = 4;
+  optional VehicleTaskStatus local_vehicle_task_status = 5;
+  optional DispositionResult last_disposition_result = 6;
+  optional CacheActionResult last_cache_action_result = 7;
+  InventoryMode inventory_mode = 8;         // FULL 时 ecu_list 必填
+  uint64 inventory_revision = 9;
+  Digest ecu_list_digest = 10;
+  repeated EcuVersion ecu_list = 11;        // FULL 模式
+}
+
+// 冻结/任务快照。
+message VehicleTaskSnapshot {
+  string activity_id = 1;
+  string vehicle_task_id = 2;
+  uint64 task_revision = 3;
+  string target_baseline_code = 4;
+  int64 release_at_ms = 5;
+  int64 start_time_ms = 6;
+  int64 end_time_ms = 7;
+  bool consent_required = 8;
+  optional string terms_version = 9;
+  bytes strategy = 10;                      // v1 暂以版本化 Protobuf bytes 承载
+  repeated PackageSummary package_list = 11;
+  string install_plan_version = 12;
+}
+
+// 任务检测响应。
+message TaskCheckResponse {
+  ResponseStatus status = 1;
+  InventoryDisposition inventory_disposition = 2;
+  optional uint64 accepted_inventory_revision = 3;
+  optional InventoryMode required_inventory_mode = 4;
+  repeated string supported_inventory_digest_algorithms = 5;
+  optional string next_action = 6;
+  optional AvailabilityStatus availability_status = 7;
+  optional string reason_code = 8;
+  optional VehicleTaskStatus vehicle_task_status = 9;
+  optional string local_task_disposition = 10;
+  optional string superseded_by_vehicle_task_id = 11;
+  optional bool snapshot_changed = 12;
+  optional string snapshot_change_type = 13;
+  optional bool reconsent_required = 14;
+  optional string package_cache_action = 15;
+  optional bool download_allowed = 16;
+  optional string download_deny_reason = 17;
+  optional bool install_request_allowed = 18;
+  optional string install_request_deny_reason = 19;
+  optional VehicleTaskSnapshot task = 20;
+}

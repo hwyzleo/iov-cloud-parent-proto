@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 package - 下载授权与校验结果 (VEH-PROTO §6.5)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/package.proto 逐项一致。
+// current_offset_bytes>0 时 current_etag 必填且 offset_scope=STORED_OBJECT；
+// ETag/packageRevision 变化必须 RESET_OFFSET。下载 URL、鉴权头和安全元数据只在
+// 授权时存在；日志不得输出这些字段。
+// =============================================================================
+
+// 下载授权请求。
+message DownloadGrantRequest {
+  string package_id = 1;
+  uint64 task_revision = 2;
+  string package_revision = 3;
+  optional string current_etag = 4;         // current_offset_bytes>0 时必填
+  optional uint64 current_offset_bytes = 5; // STORED_OBJECT 字节偏移
+  optional string offset_scope = 6;         // "STORED_OBJECT"
+  string network_type = 7;
+}
+
+// 下载授权响应。
+message DownloadGrantResponse {
+  ResponseStatus status = 1;
+  optional bool resume_allowed = 2;
+  string next_action = 3;
+  string package_revision = 4;
+  optional string download_url = 5;
+  map<string, string> headers = 6;
+  optional int64 expires_at_ms = 7;
+  optional uint64 size_bytes = 8;
+  optional Digest package_digest = 9;
+  optional string signature_algorithm = 10;
+  optional string key_id = 11;
+  optional string signature_scope = 12;
+  optional string certificate_chain_url = 13;
+  optional string encryption_algorithm = 14;
+  optional string encryption_key_ref = 15;
+  optional string signature_value = 16;
+  optional string signature_url = 17;
+  optional string etag = 18;
+  optional bool supports_range = 19;
+}
+
+// 下载/校验阶段结果上报。
+message StageResultReport {
+  string package_id = 1;
+  string stage_result_id = 2;               // 稳定 ID，幂等
+  Digest stage_result_digest = 3;
+  int64 verified_at_ms = 4;
+  string verified_package_revision = 5;
+  Result result = 6;
+  uint64 downloaded_bytes = 7;
+  optional Digest actual_package_digest = 8;
+  bool hash_verified = 9;
+  bool signature_verified = 10;
+  optional bool decryption_succeeded = 11;
+  optional uint64 duration_ms = 12;
+  optional string error_code = 13;
+}
+
+// 阶段结果响应。
+message StageResultResponse {
+  ResponseStatus status = 1;
+  bool accepted = 2;
+  string next_action = 3;
+  optional RetryPolicy retry_policy = 4;
+}

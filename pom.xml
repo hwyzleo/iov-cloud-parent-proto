@@ -19,6 +19,8 @@
 
   <modules>
     <module>iov-cloud-proto-vmd</module>
+    <module>iov-cloud-proto-vehicle-common</module>
+    <module>iov-cloud-proto-fota</module>
   </modules>
 
   <properties>

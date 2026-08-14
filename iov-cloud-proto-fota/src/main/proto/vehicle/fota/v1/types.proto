@@ -1,0 +1,279 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 types - 共享类型与枚举 (VEH-PROTO §6.2)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/types.proto 逐项一致。
+// 公共 request_id/device_id/vin/vehicle_task_id/execution_id/idempotency_key
+// 由 VehicleMessageEnvelope 承载，FOTA payload 不重复定义。
+// 时间统一 Unix epoch milliseconds；时长 _ms/_sec；大小/偏移 bytes；
+// revision/sequence 用 uint64；进度/百分比用 uint32 并校验 0..100；
+// 摘要值用小写十六进制 string 并携带算法；枚举保留 *_UNSPECIFIED=0。
+// =============================================================================
+
+// 业务响应公共状态。code "0" 表示接口正常处理，不等于业务允许。
+message ResponseStatus {
+  string code = 1;
+  optional string message = 2;          // 仅展示/诊断
+  int64 server_time_ms = 3;
+  optional uint32 retry_after_sec = 4;
+}
+
+// 摘要（算法 + 小写十六进制值）。
+message Digest {
+  string algorithm = 1;
+  string value_hex = 2;
+}
+
+// 连续序号范围（含端点）。
+message SequenceRange {
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+// ECU 清单上报模式。
+enum InventoryMode {
+  INVENTORY_MODE_UNSPECIFIED = 0;
+  INVENTORY_MODE_FULL = 1;     // 完整清单
+  INVENTORY_MODE_DIGEST = 2;   // 摘要清单
+}
+
+// 清单处置结果（云端对车端清单的判定）。
+enum InventoryDisposition {
+  INVENTORY_DISPOSITION_UNSPECIFIED = 0;
+  INVENTORY_DISPOSITION_ACCEPTED = 1;             // 接受，可解析任务
+  INVENTORY_DISPOSITION_FULL_REQUIRED = 2;        // 要求下次发送 FULL
+  INVENTORY_DISPOSITION_REVISION_CONFLICT = 3;    // inventoryRevision 冲突
+  INVENTORY_DISPOSITION_DIGEST_MISMATCH = 4;      // 摘要不匹配
+  INVENTORY_DISPOSITION_ALGORITHM_UNSUPPORTED = 5;// 算法不支持
+}
+
+// 任务可用性状态。
+enum AvailabilityStatus {
+  AVAILABILITY_STATUS_UNSPECIFIED = 0;
+  AVAILABILITY_STATUS_NONE = 1;
+  AVAILABILITY_STATUS_NOT_RELEASED = 2;
+  AVAILABILITY_STATUS_AVAILABLE = 3;
+  AVAILABILITY_STATUS_BLOCKED = 4;
+  AVAILABILITY_STATUS_PAUSED = 5;
+  AVAILABILITY_STATUS_CANCELED = 6;
+  AVAILABILITY_STATUS_SUPERSEDED = 7;
+}
+
+// VehicleTask 生命周期状态。
+enum VehicleTaskStatus {
+  VEHICLE_TASK_STATUS_UNSPECIFIED = 0;
+  VEHICLE_TASK_STATUS_DISCOVERED = 1;
+  VEHICLE_TASK_STATUS_CONSENT_PENDING = 2;
+  VEHICLE_TASK_STATUS_DOWNLOAD_PENDING = 3;
+  VEHICLE_TASK_STATUS_DOWNLOADING = 4;
+  VEHICLE_TASK_STATUS_READY = 5;
+  VEHICLE_TASK_STATUS_WAITING_WINDOW = 6;
+  VEHICLE_TASK_STATUS_PERMIT_PENDING = 7;
+  VEHICLE_TASK_STATUS_EXECUTING = 8;
+  VEHICLE_TASK_STATUS_PAUSED = 9;
+  VEHICLE_TASK_STATUS_RETRY_PENDING = 10;
+  VEHICLE_TASK_STATUS_ROLLBACK_PENDING = 11;
+  VEHICLE_TASK_STATUS_COMPLETED = 12;
+  VEHICLE_TASK_STATUS_ENDED = 13;
+}
+
+// Execution 状态（单次安装尝试）。
+enum ExecutionStatus {
+  EXECUTION_STATUS_UNSPECIFIED = 0;
+  EXECUTION_STATUS_PERMIT_PERSISTED = 1;
+  EXECUTION_STATUS_READY = 2;
+  EXECUTION_STATUS_INSTALL_STARTED = 3;
+  EXECUTION_STATUS_INSTALLING = 4;
+  EXECUTION_STATUS_REBOOTING = 5;
+  EXECUTION_STATUS_POST_CHECKING = 6;
+  EXECUTION_STATUS_ROLLING_BACK = 7;
+  EXECUTION_STATUS_RESULT_PENDING = 8;
+  EXECUTION_STATUS_SUCCEEDED = 9;
+  EXECUTION_STATUS_FAILED = 10;
+  EXECUTION_STATUS_ROLLED_BACK = 11;
+  EXECUTION_STATUS_CANCELED = 12;
+  EXECUTION_STATUS_PAUSED = 13;
+}
+
+// 用户授权状态。
+enum ConsentStatus {
+  CONSENT_STATUS_UNSPECIFIED = 0;
+  CONSENT_STATUS_NONE = 1;
+  CONSENT_STATUS_ACCEPTED = 2;
+  CONSENT_STATUS_REJECTED = 3;
+  CONSENT_STATUS_REVOKED = 4;
+}
+
+// 业务结果。
+enum Result {
+  RESULT_UNSPECIFIED = 0;
+  RESULT_SUCCEEDED = 1;
+  RESULT_FAILED = 2;
+  RESULT_PARTIAL = 3;
+  RESULT_ROLLED_BACK = 4;
+  RESULT_CANCELED = 5;
+}
+
+// 事件处置结果。
+enum EventDisposition {
+  EVENT_DISPOSITION_UNSPECIFIED = 0;
+  EVENT_DISPOSITION_ACCEPTED = 1;
+  EVENT_DISPOSITION_DUPLICATE = 2;
+  EVENT_DISPOSITION_BUFFERED = 3;
+  EVENT_DISPOSITION_REJECTED = 4;
+  EVENT_DISPOSITION_CONFLICT = 5;
+}
+
+// 控制动作。
+enum ControlAction {
+  CONTROL_ACTION_UNSPECIFIED = 0;
+  CONTROL_ACTION_NONE = 1;
+  CONTROL_ACTION_CONTINUE = 2;
+  CONTROL_ACTION_PAUSE = 3;
+  CONTROL_ACTION_ABORT = 4;
+  CONTROL_ACTION_ROLLBACK = 5;
+  CONTROL_ACTION_RESYNC = 6;
+}
+
+// 控制作用域。
+enum ControlScope {
+  CONTROL_SCOPE_UNSPECIFIED = 0;
+  CONTROL_SCOPE_EXECUTION = 1;
+  CONTROL_SCOPE_PLAN_NODE = 2;
+  CONTROL_SCOPE_ECU_JOB = 3;
+}
+
+// 控制应用模式。
+enum ApplyMode {
+  APPLY_MODE_UNSPECIFIED = 0;
+  APPLY_MODE_IMMEDIATE_IF_SAFE = 1;
+  APPLY_MODE_AT_SAFE_POINT = 2;
+  APPLY_MODE_BEFORE_NEXT_NODE = 3;
+  APPLY_MODE_AFTER_CURRENT_ATOMIC_STEP = 4;
+}
+
+// 控制回执状态。
+enum ControlAckStatus {
+  CONTROL_ACK_STATUS_UNSPECIFIED = 0;
+  CONTROL_ACK_STATUS_RECEIVED = 1;
+  CONTROL_ACK_STATUS_APPLIED = 2;
+  CONTROL_ACK_STATUS_REJECTED = 3;
+  CONTROL_ACK_STATUS_DEFERRED = 4;
+}
+
+// 单 ECU 版本条目。
+message EcuVersion {
+  string ecu_id = 1;
+  string hardware_part_number = 2;
+  string software_part_number = 3;
+  string hw_version = 4;
+  string sw_version = 5;
+}
+
+// 升级包摘要。
+message PackageSummary {
+  string package_id = 1;
+  string package_revision = 2;
+  string plan_node_id = 3;
+  string ecu_id = 4;
+  optional string component_id = 5;
+  string source_version = 6;
+  string target_version = 7;
+  uint64 size_bytes = 8;
+  Digest package_digest = 9;
+  string differential_type = 10;
+  bool encrypted = 11;
+}
+
+// 本地旧任务处置结果。
+message DispositionResult {
+  string disposition = 1;
+  string result = 2;
+  optional string reason_code = 3;
+  repeated string retained_artifact_ids = 4;
+}
+
+// 包缓存动作结果。
+message CacheActionResult {
+  string action = 1;
+  string result = 2;
+  optional string reason_code = 3;
+  repeated string retained_package_ids = 4;
+}
+
+// 重试策略。
+message RetryPolicy {
+  uint32 max_attempts = 1;
+  uint64 initial_backoff_ms = 2;
+  uint64 max_backoff_ms = 3;
+  bool refresh_credential = 4;
+}
+
+// 扩展条件值。
+message ConditionValue {
+  string code = 1;
+  string value = 2;
+  string unit = 3;
+  string quality = 4;
+}
+
+// 车辆条件快照。
+message ConditionSnapshot {
+  int64 collected_at_ms = 1;
+  uint32 traction_battery_soc = 2;               // 0..100
+  double low_voltage_battery_voltage_v = 3;
+  string ignition_state = 4;
+  string gear = 5;
+  double speed_kph = 6;
+  optional string charging_state = 7;
+  string network_type = 8;
+  uint64 available_storage_bytes = 9;
+  repeated ConditionValue extended_conditions = 10;
+}
+
+// 离线策略。
+message OfflinePolicy {
+  bool allowed = 1;
+  uint32 max_offline_duration_sec = 2;
+  uint32 heartbeat_timeout_sec = 3;
+  bool require_online_before_irreversible_stage = 4;
+  string on_disconnect_action = 5;
+  uint32 reconnect_report_deadline_sec = 6;
+}
+
+// 超时策略。
+message TimeoutPolicy {
+  uint32 max_execution_duration_sec = 1;
+  optional int64 execution_deadline_ms = 2;
+  string timeout_action = 3;
+}
+
+// 控制回执。
+message ControlAck {
+  string control_ack_id = 1;
+  uint64 ack_sequence_no = 2;
+  string control_id = 3;
+  uint64 control_revision = 4;
+  ControlAckStatus status = 5;
+  int64 processed_at_ms = 6;
+  optional string reason_code = 7;
+}
+
+// 下行控制指令（云端推送，EVENT 形态）。
+message ControlCommand {
+  string control_id = 1;
+  uint64 control_revision = 2;
+  ControlAction action = 3;
+  ControlScope scope = 4;
+  repeated string target_ids = 5;
+  ApplyMode apply_mode = 6;
+  optional int64 apply_deadline_ms = 7;
+  optional string reason_code = 8;
+  int64 issued_at_ms = 9;
+  int64 expires_at_ms = 10;
+}

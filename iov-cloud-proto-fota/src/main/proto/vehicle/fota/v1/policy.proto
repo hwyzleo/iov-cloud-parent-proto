@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 policy - 策略同步 (VEH-PROTO §6.9)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/policy.proto 逐项一致。
+// 策略同步可在无 VehicleTask 时执行；影响已冻结任务的变化必须形成新
+// task_revision 或 control_revision，不得静默修改执行中快照。
+// =============================================================================
+
+// 用户偏好。
+message UserPreference {
+  bool auto_download = 1;
+  repeated string allowed_network_types = 2;
+  bool install_reminder_enabled = 3;
+  optional string preferred_install_window = 4;
+}
+
+// 有效策略。
+message EffectivePolicy {
+  bool auto_download = 1;
+  repeated string allowed_network_types = 2;
+  string install_mode = 3;
+  uint32 max_retry_attempts = 4;
+}
+
+// 策略同步请求。
+message PolicyRequest {
+  string local_policy_version = 1;
+  optional string base_preference_version = 2;   // 乐观并发基线
+  optional UserPreference user_preference = 3;
+  optional int64 updated_at_ms = 4;
+}
+
+// 策略同步响应。
+message PolicyResponse {
+  ResponseStatus status = 1;
+  EffectivePolicy effective_policy = 2;
+  string policy_version = 3;
+  int64 effective_at_ms = 4;
+  optional bool preference_accepted = 5;
+  string current_preference_version = 6;
+  repeated string conflicting_fields = 7;
+  repeated string overridden_fields = 8;
+}

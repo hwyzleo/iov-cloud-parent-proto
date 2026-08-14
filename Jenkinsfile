@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     parameters {
-        choice(name: 'MODULE', choices: ['root', 'vmd'], description: 'Module to build: root=publish parent pom only, vmd=parent+vmd')
+        choice(name: 'MODULE', choices: ['root', 'vmd', 'vehicle-common', 'fota'], description: 'Module to build: root=publish parent pom only, others=parent+module')
     }
 
     environment {

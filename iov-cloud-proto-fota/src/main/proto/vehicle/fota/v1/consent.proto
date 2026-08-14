@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 consent - 用户授权闭环 (VEH-PROTO §6.4)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/consent.proto 逐项一致。
+// accepted 只表示上报被正常校验和记录；用户拒绝/撤回应返回 accepted=true，
+// 业务结果以 effective_consent_status 为准。
+// =============================================================================
+
+// 授权上报。
+message ConsentReport {
+  ConsentStatus consent_status = 1;
+  string terms_version = 2;
+  string terms_id = 3;
+  Digest terms_digest = 4;
+  int64 consent_time_ms = 5;
+  string channel = 6;
+  optional string consent_receipt_id = 7;   // REVOKED 时必填
+}
+
+// 授权响应。
+message ConsentResponse {
+  ResponseStatus status = 1;
+  bool accepted = 2;                        // 仅表示上报被正常校验和记录
+  ConsentStatus effective_consent_status = 3;
+  optional string consent_receipt_id = 4;
+  optional int64 receipt_expires_at_ms = 5;
+  optional Digest consent_scope_digest = 6;
+  VehicleTaskStatus vehicle_task_status = 7;
+  string next_action = 8;
+}

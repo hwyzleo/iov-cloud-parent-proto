@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 log - 日志上传 (VEH-PROTO §6.7)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/log.proto 逐项一致。
+// 日志内容不进入 Proto；这里只传控制面元数据、对象键、摘要和结果。
+// =============================================================================
+
+// 日志时间范围。
+message LogTimeRange {
+  int64 start_at_ms = 1;
+  int64 end_at_ms = 2;
+}
+
+// 分片上传策略。
+message MultipartPolicy {
+  string upload_id = 1;
+  uint64 part_size_bytes = 2;
+  uint32 max_parts = 3;
+  string completion_rule = 4;
+}
+
+// 日志上传凭证请求。
+message LogGrantRequest {
+  optional string log_request_id = 1;
+  repeated string collection_scope = 2;
+  LogTimeRange log_time_range = 3;
+  string redaction_profile_version = 4;
+  string log_type = 5;
+  string file_name = 6;
+  uint64 file_size_bytes = 7;
+  Digest file_digest = 8;
+  string mime_type = 9;
+  optional string compression_algorithm = 10;
+  optional string encryption_algorithm = 11;
+  string privacy_level = 12;
+}
+
+// 日志上传凭证响应。
+message LogGrantResponse {
+  ResponseStatus status = 1;
+  string upload_url = 2;
+  map<string, string> headers = 3;
+  string object_key = 4;
+  int64 expires_at_ms = 5;
+  uint64 max_size_bytes = 6;
+  optional MultipartPolicy multipart_policy = 7;
+}
+
+// 日志上传结果上报。
+message LogUploadResult {
+  string object_key = 1;
+  Result upload_result = 2;
+  optional string etag = 3;
+  optional Digest actual_file_digest = 4;
+  optional int64 uploaded_at_ms = 5;
+  optional string error_code = 6;
+}
+
+// 日志结果响应。
+message LogResultResponse {
+  ResponseStatus status = 1;
+  bool accepted = 2;
+}

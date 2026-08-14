@@ -1,0 +1,111 @@
+# =============================================================================
+# vehicle-proto-baseline.yaml
+# PAR-PROTO-DSN-CR-002 — Common/FOTA bootstrap donor freeze + authority cutover
+# =============================================================================
+# This manifest records the one-time bootstrap of vehicle.common.v1 and
+# vehicle.fota.v1 from the frozen VEH-PROTO snapshot, and the authority cutover
+# to PAR-PROTO. VEH-PROTO is the vehicle-side protocol DOCUMENTATION SSOT (no
+# independent proto repo is produced); the physical donor source lives in the
+# vehicle-side repos (iov-vehicle-cgw-fota proto/) which declare byte-level
+# consistency with VEH-PROTO.
+# After cutover: canonical PRs originate ONLY in PAR-PROTO and VEH-PROTO pins
+# released versions (one-way: par-proto -> veh-proto).
+# =============================================================================
+
+contract_authority: par-proto
+
+bootstrap_source:
+  # VEH-PROTO is the vehicle protocol documentation SSOT; it does not emit a repo.
+  repository: VEH-PROTO (documentation SSOT; donor physical source: iov-vehicle-cgw-fota proto/)
+  revision: frozen-snapshot-2026-08-14
+  # authority identity is the file SHA-256 set below (descriptor + per-file).
+  common_descriptor_sha256: 4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200
+  fota_descriptor_sha256: 56924c848d767e5e2c0cde20a1831208ab5d416035dd83ccd8354d6742a9008e
+
+# Release from which PAR-PROTO becomes the canonical IDL authority.
+# PENDING: set to the actual bootstrap release tag once it passes Java/C++
+# generation and cross-language golden gates (acceptance criteria §11).
+authority_effective_from: PENDING-bootstrap-release
+
+sync_direction: par-proto-to-veh-proto
+
+# ---- Donor freeze (PAR-PROTO-DSN-CR-002 §3.1) -----------------------------
+# Only repo path / build metadata / comment repo-references were allowed to
+# change during bootstrap import; semantics, package, field numbers, reserved
+# and options are byte-identical to the donor snapshot.
+donor_freeze:
+  common:
+    file: vehicle/common/v1/envelope.proto
+    sha256: 6fada5b9d495def3825bea39c06c4989a2c8aae5c04c7eb87a38c9a7202c3741
+    descriptor_set: descriptors/vehicle-common-v1.pb
+    descriptor_sha256: 4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200
+  fota:
+    files:
+      vehicle/fota/v1/types.proto: 76d0c565bbdda05e3f47dd1eb237d0b7c89a75a21dc0db20a2fcb9c2b0f0b927
+      vehicle/fota/v1/task.proto: 9134019f083514a63e294e30ad247167b0abeafb636cb1e4ecc900b862afcd38
+      vehicle/fota/v1/consent.proto: 03298061e2594b157f23e63bb33e7cb054518d0e42a517ff4e7f0ef6798c60b6
+      vehicle/fota/v1/package.proto: ee87e51289ae9a080054e8d2da5a2eba2865b02b11fce3fde2f57e644a37e53d
+      vehicle/fota/v1/execution.proto: a88b399b257593d1006450b90044d9f3cd3a1bd0cf808b3f4638ea64c2c0a881
+      vehicle/fota/v1/log.proto: dd2f567abe2560ef672a70fc0e1a7ad1699f2952246a3a6f89fb6dcaba3a2f21
+      vehicle/fota/v1/reconcile.proto: 851f870672de8ccb4447f0f75ee94366bf5bde0f8ee371e02359961ccdfe0dd8
+      vehicle/fota/v1/policy.proto: 3f3848085d57b6bed195641a7c54fd281329a5a300be552a6e58691c711cb503
+    descriptor_set: descriptors/vehicle-fota-v1.pb
+    descriptor_sha256: 56924c848d767e5e2c0cde20a1831208ab5d416035dd83ccd8354d6742a9008e
+
+# ---- Toolchain (reproducibility) ------------------------------------------
+toolchain:
+  protoc: 3.25.5
+  protobuf-java: 3.25.5
+  buf: 1.72.0
+  maven: 3.9.14
+  jdk: 17
+
+# ---- Cross-language contract (Java generation in this repo only) ------------
+# This repo generates Java. C++ generation is the vehicle-side responsibility:
+# VEH-PROTO / vehicle builds generate C++ from the released canonical source /
+# DescriptorSet and MUST round-trip byte-identically against the Java-produced
+# reference bytes below (design §5 gate 6/7 / §8).
+golden_reference:
+  producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+  location: verify/golden/expected/
+  files:
+    envelope_taskcheck.bin:
+      sha256: 7f260cefd97ef972f64e8b5ece85fb79286eec9b67c87a74ae993b33d257b2c0
+      bytes: 306
+    envelope_unknown_field.bin:
+      sha256: 75a5e30b9f67e340edca41eacf585b954f501340364b1ee23eb691bfe59b5a11
+      bytes: 310
+    envelope_unknown_enum.bin:
+      sha256: b5a73b164b176d92086e4f4976822a9c44bdb4ecaf0e9d110111147a75d23b6f
+      bytes: 307
+
+# ---- PayloadType registry (payload_type = vehicle.fota.v1.<MessageName>) ---
+# Class full-name in generated Java = payload_type string (acceptance §8).
+payload_type_registry:
+  fota:
+    - vehicle.fota.v1.TaskCheckRequest
+    - vehicle.fota.v1.TaskCheckResponse
+    - vehicle.fota.v1.ConsentReport
+    - vehicle.fota.v1.ConsentResponse
+    - vehicle.fota.v1.DownloadGrantRequest
+    - vehicle.fota.v1.DownloadGrantResponse
+    - vehicle.fota.v1.StageResultReport
+    - vehicle.fota.v1.StageResultResponse
+    - vehicle.fota.v1.InstallPermitRequest
+    - vehicle.fota.v1.InstallPermitResponse
+    - vehicle.fota.v1.ExecutionEvent
+    - vehicle.fota.v1.EventResponse
+    - vehicle.fota.v1.ControlAckReport
+    - vehicle.fota.v1.ControlAckResponse
+    - vehicle.fota.v1.FinalResultReport
+    - vehicle.fota.v1.FinalResultResponse
+    - vehicle.fota.v1.LogGrantRequest
+    - vehicle.fota.v1.LogGrantResponse
+    - vehicle.fota.v1.LogUploadResult
+    - vehicle.fota.v1.LogResultResponse
+    - vehicle.fota.v1.ReconcileRequest
+    - vehicle.fota.v1.ReconcileResponse
+    - vehicle.fota.v1.PolicyRequest
+    - vehicle.fota.v1.PolicyResponse
+  common:
+    - vehicle.common.v1.VehicleMessageEnvelope

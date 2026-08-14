@@ -1,7 +1,11 @@
 version: v2
 modules:
   - path: iov-cloud-proto-vmd/src/main/proto
+  - path: iov-cloud-proto-vehicle-common/src/main/proto
+  - path: iov-cloud-proto-fota/src/main/proto
 lint:
-  use: [STANDARD]
+  use:
+    - STANDARD
 breaking:
-  use: [WIRE_JSON]
+  use:
+    - WIRE_JSON

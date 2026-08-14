@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 execution - 安装许可、事件、控制回执与最终结果 (VEH-PROTO §6.6)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/execution.proto 逐项一致。
+// allowed=true 时 permit、Execution、控制版本、有效期和冻结策略字段全部必填；
+// valid_until_ms 只限制进入 INSTALL_STARTED。
+// 事件先 durable 保存再分配 sequence_no；只有连续 accepted_sequence_no 推进后
+// 才能清理。result_accepted=true 前必须满足 accepted_sequence_no>=final_sequence_no；
+// Execution 收口不等于 VehicleTask 必然终态。
+// =============================================================================
+
+// 安装许可请求。
+message InstallPermitRequest {
+  uint64 task_revision = 1;
+  string install_plan_version = 2;
+  Digest package_manifest_digest = 3;
+  optional string consent_receipt_id = 4;
+  Digest local_readiness_digest = 5;
+  bool local_guard_passed = 6;
+  repeated string failed_conditions = 7;
+  string condition_set_version = 8;
+  ConditionSnapshot condition_snapshot = 9;
+}
+
+// 安装许可响应。
+message InstallPermitResponse {
+  ResponseStatus status = 1;
+  bool allowed = 2;
+  optional string deny_reason = 3;
+  optional string execution_id = 4;
+  optional uint32 attempt_no = 5;
+  optional string permit_id = 6;
+  optional string permit_token = 7;
+  optional int64 issued_at_ms = 8;
+  optional uint64 control_revision = 9;
+  optional int64 valid_until_ms = 10;       // 仅约束进入 INSTALL_STARTED
+  optional string install_plan_version = 11;
+  optional OfflinePolicy offline_policy = 12;
+  optional Digest offline_policy_digest = 13;
+  optional TimeoutPolicy timeout_policy = 14;
+  optional Digest timeout_policy_digest = 15;
+  optional int64 next_retry_at_ms = 16;
+}
+
+// 执行事件。先 durable 写入 payload，再分配/提交 sequence_no。
+message ExecutionEvent {
+  string event_id = 1;                      // 幂等标识
+  Digest event_digest = 2;
+  optional ControlAck control_ack = 3;
+  uint32 attempt_no = 4;
+  uint64 sequence_no = 5;                   // 严格递增
+  optional string plan_node_id = 6;
+  optional string ecu_job_id = 7;
+  optional string package_id = 8;
+  optional string component_id = 9;
+  optional uint32 node_attempt_no = 10;
+  int64 occurred_at_ms = 11;
+  string stage = 12;                        // INSTALL/REBOOT/POST_CHECK/ROLLBACK（稳定字符串）
+  string event_status = 13;                 // 事件状态字符串
+  optional uint32 progress = 14;            // 0..100
+  optional string progress_scope = 15;
+  optional string ecu_id = 16;
+  optional string current_version = 17;
+  optional string target_version = 18;
+  optional string error_code = 19;
+  optional string error_detail = 20;
+}
+
+// 事件响应。
+message EventResponse {
+  ResponseStatus status = 1;
+  EventDisposition event_disposition = 2;
+  uint64 accepted_sequence_no = 3;          // 连续水位
+  repeated SequenceRange missing_sequence_ranges = 4;
+  VehicleTaskStatus vehicle_task_status = 5;
+  optional ControlCommand control = 6;
+  optional uint32 reporting_interval_sec = 7;
+}
+
+// 控制回执上报。
+message ControlAckReport {
+  ControlAck ack = 1;
+}
+
+// 控制回执响应。
+message ControlAckResponse {
+  ResponseStatus status = 1;
+  bool accepted = 2;
+  ControlAckStatus current_control_status = 3;
+}
+
+// 单 ECU 最终结果。
+message EcuResult {
+  string ecu_id = 1;
+  string source_version = 2;
+  string target_version = 3;
+  string plan_node_id = 4;
+  string package_id = 5;
+  optional string actual_version = 6;
+  string version_read_status = 7;
+  Result result = 8;
+  optional string failure_stage = 9;
+  optional Result rollback_result = 10;
+}
+
+// 错误摘要。
+message ErrorSummary {
+  string ecu_id = 1;
+  string stage = 2;
+  string error_code = 3;
+}
+
+// 最终结果上报。
+message FinalResultReport {
+  uint64 final_sequence_no = 1;
+  uint64 last_received_control_revision = 2;
+  uint64 last_applied_control_revision = 3;
+  repeated string pending_control_ids = 4;
+  Digest result_digest = 5;
+  Result result = 6;
+  optional string actual_baseline_code = 7;
+  string baseline_status = 8;
+  repeated EcuResult ecu_results = 9;
+  int64 started_at_ms = 10;
+  int64 completed_at_ms = 11;
+  bool rollback_occurred = 12;
+  repeated ErrorSummary error_summary = 13;
+}
+
+// 最终结果响应。
+message FinalResultResponse {
+  ResponseStatus status = 1;
+  bool result_accepted = 2;
+  ExecutionStatus execution_status = 3;
+  uint64 accepted_sequence_no = 4;
+  repeated SequenceRange missing_sequence_ranges = 5;
+  VehicleTaskStatus vehicle_task_status = 6;
+  bool need_logs = 7;
+  string next_action = 8;
+  optional int64 next_retry_at_ms = 9;
+}

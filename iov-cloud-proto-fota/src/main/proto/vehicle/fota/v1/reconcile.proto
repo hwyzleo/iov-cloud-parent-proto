@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 reconcile - 状态对账与恢复 (VEH-PROTO §6.8)
+// =============================================================================
+// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/reconcile.proto 逐项一致。
+// 下载偏移不进入 InstallCheckpoint，继续通过 package_id+etag+offset 在下载授权
+// 接口恢复。云端 checkpoint 不得直接指定 ECU 不可逆刷写位置；真实状态由车端
+// 执行器判定。
+// =============================================================================
+
+// 对账查询作用域。
+enum QueryScope {
+  QUERY_SCOPE_UNSPECIFIED = 0;
+  QUERY_SCOPE_VEHICLE_TASK = 1;
+  QUERY_SCOPE_EXECUTION = 2;
+}
+
+// 执行对账处置。
+enum ExecutionDisposition {
+  EXECUTION_DISPOSITION_UNSPECIFIED = 0;
+  EXECUTION_DISPOSITION_CONSISTENT = 1;
+  EXECUTION_DISPOSITION_CLOUD_ONLY = 2;
+  EXECUTION_DISPOSITION_VEHICLE_ONLY = 3;
+  EXECUTION_DISPOSITION_REVISION_CONFLICT = 4;
+  EXECUTION_DISPOSITION_MANUAL_RECOVERY_REQUIRED = 5;
+}
+
+// 安装检查点（不含下载偏移）。
+message InstallCheckpoint {
+  uint64 checkpoint_version = 1;
+  Digest checkpoint_digest = 2;
+  string stage = 3;
+  optional string plan_node_id = 4;
+  optional string ecu_job_id = 5;
+}
+
+// 对账请求。
+message ReconcileRequest {
+  QueryScope query_scope = 1;
+  VehicleTaskStatus local_vehicle_task_status = 2;
+  optional ExecutionStatus local_execution_status = 3;
+  optional uint64 last_sequence_no = 4;
+  optional uint64 last_acked_sequence_no = 5;
+  optional uint64 last_control_revision = 6;
+  optional string boot_id = 7;
+  optional InstallCheckpoint checkpoint = 8;
+}
+
+// 对账响应。
+message ReconcileResponse {
+  ResponseStatus status = 1;
+  VehicleTaskStatus vehicle_task_status = 2;
+  optional ExecutionDisposition execution_disposition = 3;
+  optional ExecutionStatus execution_status = 4;
+  optional uint64 accepted_sequence_no = 5;
+  optional InstallCheckpoint acknowledged_checkpoint = 6;
+  optional bool resume_allowed = 7;
+  string next_action = 8;
+  repeated SequenceRange missing_sequence_ranges = 9;
+  optional ControlCommand pending_control = 10;
+}

@@ -38,6 +38,12 @@ buildNumber.properties
 # buf generated code
 gen/
 
+# Cross-language verification harness artifacts (regenerable)
+# verify/golden/ holds committed Java reference golden bytes (shared contract
+# for vehicle-side C++ validation).
+verify/out/
+verify/gen/
+
 # IDE - IntelliJ IDEA
 .idea/
 *.iml
@@ -57,3 +63,5 @@ bin/
 # macOS
 .DS_Store
 Thumbs.db
+
+graphify-out/
