@@ -33,10 +33,16 @@ sync_direction: par-proto-to-veh-proto
 # Only repo path / build metadata / comment repo-references were allowed to
 # change during bootstrap import; semantics, package, field numbers, reserved
 # and options are byte-identical to the donor snapshot.
+# --- PAR-PROTO-DSN-CR-004 (comment-only, wire zero-change) ------------------
+# sha256 below tracks the CURRENT canonical source. CR-004 upgraded the field-3
+# protocol_version comment to a normative contract (see envelope.proto); the
+# schema / wire / descriptor are unchanged (descriptor_sha256 untouched). The
+# original donor hash is preserved for CR-002 provenance:
+#   donor sha256 = 6fada5b9d495def3825bea39c06c4989a2c8aae5c04c7eb87a38c9a7202c3741
 donor_freeze:
   common:
     file: vehicle/common/v1/envelope.proto
-    sha256: 6fada5b9d495def3825bea39c06c4989a2c8aae5c04c7eb87a38c9a7202c3741
+    sha256: 5b6dbb6b981a95a98e06394f21f3b13a5ee52f1214b61c6cb02f56fd37932e6d
     descriptor_set: descriptors/vehicle-common-v1.pb
     descriptor_sha256: 4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200
   fota:

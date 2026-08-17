@@ -37,7 +37,19 @@ message TraceContext {
 message VehicleMessageEnvelope {
   string request_id = 1;                // 业务请求标识（跨一次业务操作的多个传输消息保持不变）
   int64  timestamp_ms = 2;              // 消息创建时间，Unix epoch milliseconds
-  string protocol_version = 3;          // Envelope/车云消息协议版本，如 "fota-v1"
+  // protocol_version —— 车云 Envelope 交换契约版本标识（不透明字符串，非数值 major）。
+  // Normative: opaque, case-sensitive protocol-version identifier.
+  // The current FOTA value is exactly "fota-v1". The <domain>-v<version>
+  // shape is a naming convention only and does not define a parseable grammar.
+  // Consumers MUST match the complete string against an explicit allowlist
+  // (for example, ["fota-v1"]) and MUST NOT parse or derive a numeric major
+  // from prefixes, '-' separated segments, or a stripped 'v' marker.
+  // service identifies the routed business service; payload_type identifies
+  // the fully-qualified payload message. protocol_version versions the
+  // domain-level Envelope exchange contract and replaces neither field.
+  // Wire-compatible evolution keeps "fota-v1". An incompatible contract
+  // requires a new complete value and an atomically upgraded release-set.
+  string protocol_version = 3;
   string device_id = 4;                 // 设备标识
   string vin = 5;                       // VIN（敏感标识，仅协议承载，不进日志原文）
   optional string vehicle_task_id = 6;  // 关联 VehicleTask（FOTA 长流程）

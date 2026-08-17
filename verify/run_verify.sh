@@ -5,7 +5,7 @@
 # Reproduces the release gates (design §5 / §11 + CR-003 §6 / §9) runnable here:
 #   1. Maven reactor build (Java generation)            — gate 5 (Java)
 #   2. buf lint on vehicle-common + fota + vagw modules — gate 1
-#   3. Donor parity (imported sources == donor snapshot) — acceptance #1
+#   3. Donor parity (common: schema-equal to donor; fota: byte-identical) — acceptance #1
 #   4. Provenance SHA-256 vs committed sources/descriptors — gate 9
 #   5. Descriptor determinism (regenerate + compare)     — gate 3 (incl. vagw)
 #   6. PayloadType registry ↔ descriptor full-name        — gate 8
@@ -51,14 +51,33 @@ else
 fi
 
 # ---- 3. Donor parity -------------------------------------------------------
-step 3 "Donor parity (imported source == VEH-PROTO snapshot)"
+# common/envelope.proto is compared by SCHEMA (descriptor without SourceCodeInfo):
+# after PAR-PROTO-DSN-CR-004 the canonical field-3 comment is normative and
+# intentionally diverges from the donor snapshot, but the schema / wire contract
+# MUST stay identical (comment-only changes never appear in the descriptor).
+# FOTA files are untouched by this CR and remain byte-identical to the donor.
+step 3 "Donor parity (common: schema-equal; fota: byte-identical)"
 DONOR_COMMON="${DONOR_COMMON:-/Users/hwyz_leo/Projects/open-iov/vehicle/cgw/iov-vehicle-cgw-fota/proto/vehicle/common/v1/envelope.proto}"
 DONOR_FOTA="${DONOR_FOTA:-/Users/hwyz_leo/Projects/open-iov/vehicle/cgw/iov-vehicle-cgw-fota/proto/vehicle/fota/v1}"
+PROTOC="${PROTOC:-$ROOT/iov-cloud-proto-fota/target/protoc-plugins/protoc-3.25.5-osx-aarch_64.exe}"
 if [ -f "$DONOR_COMMON" ]; then
-  if diff -q "$DONOR_COMMON" iov-cloud-proto-vehicle-common/src/main/proto/vehicle/common/v1/envelope.proto >/dev/null; then
-    pass "common/envelope.proto identical to donor"
+  if [ -x "$PROTOC" ]; then
+    # Schema parity: regenerate descriptors from donor and committed source
+    # (no --include_source_info) using the SAME proto root + relative path, so
+    # the FileDescriptorProto.name matches and comment-only changes (CR-004)
+    # never alter the bytes; any field/type/package drift would.
+    DONOR_PROTO_ROOT="${DONOR_COMMON%/vehicle/common/v1/envelope.proto}"
+    "$PROTOC" -I "$DONOR_PROTO_ROOT" \
+      --descriptor_set_out=/tmp/donor-common.pb vehicle/common/v1/envelope.proto
+    "$PROTOC" -I iov-cloud-proto-vehicle-common/src/main/proto \
+      --descriptor_set_out=/tmp/committed-common.pb vehicle/common/v1/envelope.proto
+    if cmp -s /tmp/donor-common.pb /tmp/committed-common.pb; then
+      pass "common/envelope.proto schema-equal to donor (CR-004 comment-only ok)"
+    else
+      fail "common/envelope.proto schema differs from donor"
+    fi
   else
-    fail "common/envelope.proto differs from donor"
+    echo "  (protoc not cached — schema-parity gate enforced in CI)"
   fi
   for f in "$DONOR_FOTA"/*.proto; do
     b=$(basename "$f")
@@ -79,7 +98,7 @@ shasum -a 256 \
   iov-cloud-proto-vehicle-common/src/main/proto/vehicle/common/v1/envelope.proto \
   descriptors/vehicle-common-v1.pb descriptors/vehicle-fota-v1.pb \
   > /tmp/cr002_checksums.txt
-grep -q "6fada5b9d495def3825bea39c06c4989a2c8aae5c04c7eb87a38c9a7202c3741" /tmp/cr002_checksums.txt && pass "common source sha256 matches manifest" || fail "common source sha256 mismatch"
+grep -q "5b6dbb6b981a95a98e06394f21f3b13a5ee52f1214b61c6cb02f56fd37932e6d" /tmp/cr002_checksums.txt && pass "common source sha256 matches manifest" || fail "common source sha256 mismatch"
 grep -q "4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200" /tmp/cr002_checksums.txt && pass "common descriptor sha256 matches manifest" || fail "common descriptor sha256 mismatch"
 grep -q "56924c848d767e5e2c0cde20a1831208ab5d416035dd83ccd8354d6742a9008e" /tmp/cr002_checksums.txt && pass "fota descriptor sha256 matches manifest" || fail "fota descriptor sha256 mismatch"
 # ---- CR-003: vagw source + descriptor (cloud_artifacts section) -----------
