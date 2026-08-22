@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'java17' }
 
     parameters {
         choice(name: 'MODULE', choices: ['root', 'vmd', 'vehicle-common', 'fota', 'vagw'], description: 'Module to build: root=publish parent pom only, others=parent+module')
@@ -11,6 +11,7 @@ pipeline {
     }
 
     tools {
+        jdk   'temurin-17'
         maven 'M3'
     }
 
