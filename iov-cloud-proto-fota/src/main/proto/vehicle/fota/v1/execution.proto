@@ -7,9 +7,13 @@ import "vehicle/fota/v1/types.proto";
 option cc_enable_arenas = true;
 
 // =============================================================================
-// vehicle.fota.v1 execution - 安装许可、事件、控制回执与最终结果 (VEH-PROTO §6.6)
+// vehicle.fota.v1 execution - 安装许可、事件、控制回执与最终结果
+// (VEH-PROTO §6.6 + PAR-PROTO-DSN-CR-005)
 // =============================================================================
-// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/execution.proto 逐项一致。
+// SSOT：本文件由 VEH-PROTO 冻结快照 bootstrap；PAR-PROTO-DSN-CR-005 以字段
+// 追加方式扩展 ExecutionEvent/EcuResult/ErrorSummary 并新增 SoftwareUnitResult
+// （Target/Slot 贯穿执行事件与最终结果），本仓为 canonical 权威，VEH-PROTO
+// 按 release 单向同步。既有字段号 1~20 永不改号。
 // allowed=true 时 permit、Execution、控制版本、有效期和冻结策略字段全部必填；
 // valid_until_ms 只限制进入 INSTALL_STARTED。
 // 事件先 durable 保存再分配 sequence_no；只有连续 accepted_sequence_no 推进后
@@ -72,6 +76,11 @@ message ExecutionEvent {
   optional string target_version = 18;
   optional string error_code = 19;
   optional string error_detail = 20;
+
+  // PAR-PROTO-DSN-CR-005：事件关联的软件目标与槽位。
+  // MULTI_TARGET 的 package/ecu job 事件时 target 必填；单镜像缺省映射 ECU_IMAGE。
+  optional string software_target_code = 21;
+  optional string slot = 22;
 }
 
 // 事件响应。
@@ -97,7 +106,31 @@ message ControlAckResponse {
   ControlAckStatus current_control_status = 3;
 }
 
+// 单个软件单元（Target/Slot 维度）的最终结果（PAR-PROTO-DSN-CR-005）。
+// 聚合语义：全部成功为 SUCCEEDED；任一失败且未整体回滚为 PARTIAL/FAILED，
+// 聚合规则由 FOTA 业务规范确定，不由 Proto consumer 自行猜测。
+message SoftwareUnitResult {
+  string software_target_code = 1;
+  string source_version = 2;
+  string target_version = 3;
+  optional string actual_version = 4;
+  optional string slot = 5;
+  optional bool active = 6;
+  Result result = 7;
+  optional string failure_stage = 8;
+  optional Result rollback_result = 9;
+  optional string package_id = 10;
+}
+
 // 单 ECU 最终结果。
+// 合法组合：
+//   legacy/SINGLE_IMAGE : 既有字段 2/3/5/6/8/9/10 继续有效，
+//                         software_unit_results 必须为空
+//   MULTI_TARGET        : software_unit_results 非空；既有 source/target/actual
+//                         version 与 package_id 必须为空，ECU 级 result 表示
+//                         units 聚合结果；聚合/部分成功/回滚规则由 FOTA 业务
+//                         规范定义，Proto consumer 不得自行猜测
+// 结果中的 target/slot 必须与 PackageSummary、ExecutionEvent 和实际安装计划一致。
 message EcuResult {
   string ecu_id = 1;
   string source_version = 2;
@@ -109,6 +142,9 @@ message EcuResult {
   Result result = 8;
   optional string failure_stage = 9;
   optional Result rollback_result = 10;
+
+  repeated SoftwareUnitResult software_unit_results = 11;
+  EcuSoftwareModel software_model = 12;
 }
 
 // 错误摘要。
@@ -116,6 +152,10 @@ message ErrorSummary {
   string ecu_id = 1;
   string stage = 2;
   string error_code = 3;
+
+  // PAR-PROTO-DSN-CR-005：错误关联的软件目标与槽位（MULTI_TARGET 时定位到单元）。
+  optional string software_target_code = 4;
+  optional string slot = 5;
 }
 
 // 最终结果上报。

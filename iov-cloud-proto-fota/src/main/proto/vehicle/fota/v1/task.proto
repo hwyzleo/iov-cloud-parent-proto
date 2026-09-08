@@ -7,9 +7,11 @@ import "vehicle/fota/v1/types.proto";
 option cc_enable_arenas = true;
 
 // =============================================================================
-// vehicle.fota.v1 task - 升级任务检测 (VEH-PROTO §6.3)
+// vehicle.fota.v1 task - 升级任务检测 (VEH-PROTO §6.3 + PAR-PROTO-DSN-CR-005)
 // =============================================================================
-// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/task.proto 逐项一致。
+// SSOT：本文件由 VEH-PROTO 冻结快照 bootstrap；PAR-PROTO-DSN-CR-005 以字段
+// 追加方式扩展 TaskCheckRequest/Response（canonicalization 版本协商），本仓为
+// canonical 权威，VEH-PROTO 按 release 单向同步。既有字段号 1~20 永不改号。
 // inventory_mode=FULL 时 ecu_list 必须非空；DIGEST 只有云端已有同 VIN、
 // revision、算法和摘要匹配的完整清单时才能 ACCEPTED。
 // inventory_disposition!=ACCEPTED 时不得消费任务；有任务时 task、
@@ -30,6 +32,13 @@ message TaskCheckRequest {
   uint64 inventory_revision = 9;
   Digest ecu_list_digest = 10;
   repeated EcuVersion ecu_list = 11;        // FULL 模式
+
+  // PAR-PROTO-DSN-CR-005：清单规范化版本。旧生产者值为 0；当 ecu_list 全部为
+  // legacy UNSPECIFIED/SINGLE_IMAGE 且 software_units 为空时按 canonicalization-v1。
+  // 任一 ECU 使用 MULTI_TARGET/software_units 时，version 必须为 2。
+  // DIGEST 请求缺少版本时只允许匹配历史 v1 FULL。
+  // v1 与 v2 摘要空间独立，禁止跨版本比较或以 v2 重算覆盖 v1 存量值。
+  uint32 inventory_canonicalization_version = 12;
 }
 
 // 冻结/任务快照。
@@ -70,4 +79,11 @@ message TaskCheckResponse {
   optional bool install_request_allowed = 18;
   optional string install_request_deny_reason = 19;
   optional VehicleTaskSnapshot task = 20;
+
+  // PAR-PROTO-DSN-CR-005：云端支持的 ECU 软件模型与规范化版本。
+  // 客户端不得仅因列表包含 MULTI_TARGET 就启用；还需 release-set/ECU capability
+  // 允许。未知模型或规范化版本必须 FULL_REQUIRED/ALGORITHM_UNSUPPORTED 形式
+  // fail-closed，不得按 SINGLE_IMAGE 降级。
+  repeated EcuSoftwareModel supported_ecu_software_models = 21;
+  repeated uint32 supported_inventory_canonicalization_versions = 22;
 }

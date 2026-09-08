@@ -5,9 +5,12 @@ package vehicle.fota.v1;
 option cc_enable_arenas = true;
 
 // =============================================================================
-// vehicle.fota.v1 types - 共享类型与枚举 (VEH-PROTO §6.2)
+// vehicle.fota.v1 types - 共享类型与枚举 (VEH-PROTO §6.2 + PAR-PROTO-DSN-CR-005)
 // =============================================================================
-// SSOT：本文件与 VEH-PROTO 统一协议仓库 fota/v1/types.proto 逐项一致。
+// SSOT：本文件由 VEH-PROTO 冻结快照 bootstrap；PAR-PROTO-DSN-CR-005 起以字段
+// 追加方式扩展 EcuVersion/PackageSummary 并新增 EcuSoftwareModel/
+// SoftwareUnitVersion，本仓为 canonical 权威，VEH-PROTO 按 release 单向同步。
+// 既有字段号 1~11 永不改号；新增字段号不与旧字段冲突。
 // 公共 request_id/device_id/vin/vehicle_task_id/execution_id/idempotency_key
 // 由 VehicleMessageEnvelope 承载，FOTA payload 不重复定义。
 // 时间统一 Unix epoch milliseconds；时长 _ms/_sec；大小/偏移 bytes；
@@ -40,6 +43,17 @@ enum InventoryMode {
   INVENTORY_MODE_UNSPECIFIED = 0;
   INVENTORY_MODE_FULL = 1;     // 完整清单
   INVENTORY_MODE_DIGEST = 2;   // 摘要清单
+}
+
+// 单个 ECU 的软件治理模型（属于 ECU，不属于整车；同一清单可混合两种模型）。
+// 注意：描述 ECU 软件治理形态，不是 InventoryMode（FULL/DIGEST）。
+// 合法组合见 EcuVersion：UNSPECIFIED=仅兼容旧生产者按 SINGLE_IMAGE；
+// SINGLE_IMAGE=单活动镜像（可含 ECU_IMAGE software_units 表达 A/B）；
+// MULTI_TARGET=多 Target，全部软件事实来自 software_units。
+enum EcuSoftwareModel {
+  ECU_SOFTWARE_MODEL_UNSPECIFIED = 0;
+  ECU_SOFTWARE_MODEL_SINGLE_IMAGE = 1;
+  ECU_SOFTWARE_MODEL_MULTI_TARGET = 2;
 }
 
 // 清单处置结果（云端对车端清单的判定）。
@@ -166,13 +180,44 @@ enum ControlAckStatus {
   CONTROL_ACK_STATUS_DEFERRED = 4;
 }
 
+// 单个 ECU 内一个软件单元（Target/Slot 维度）的版本事实。
+// target code 是 ECU 内稳定逻辑目标，不是软件零件号。
+// slot 为空表示非 A/B 或只报告不区分槽位的当前镜像。
+// 多 Slot 时 active presence 必须存在；单个无 Slot 单元可缺省并规范化为 true。
+// digest 如存在表示该软件单元内容摘要，不替代 software part number/version。
+message SoftwareUnitVersion {
+  string software_target_code = 1;
+  string software_part_number = 2;
+  string sw_version = 3;
+  optional string slot = 4;
+  optional bool active = 5;
+  optional Digest software_digest = 6;
+}
+
 // 单 ECU 版本条目。
+// 字段 1~5 为 legacy SINGLE_IMAGE 单镜像面，永不改号；SINGLE_IMAGE 只使用
+// 字段 3/5/6/7（PN/version/slot/active），不得携带 software_units。结构化多
+// Target/多 Slot 通过 software_units[] 表达（MULTI_TARGET）。合法组合：
+//   UNSPECIFIED : legacy PN/version 非空，units 空（仅兼容存量旧生产者，规范化为 SINGLE_IMAGE）
+//   SINGLE_IMAGE: legacy PN/version 非空，units 空；slot(6)/active(7) 可选
+//   MULTI_TARGET: legacy PN/version/slot/active 全部为空，units 1..N
+// 冲突（拒绝）：MULTI_TARGET 携带任何 legacy 软件字段；UNSPECIFIED 携带 units
+// （禁止猜测）；SINGLE_IMAGE 携带 units（单镜像只用 legacy 字段 3/5/6/7）；
+// active=false 且 slot 缺失；重复 target/slot、双 active、多 Slot 缺 active。
+// MULTI_TARGET 是否要求至少两个不同 Target 由业务 capability 决定，Proto 层
+// 不以数组长度推断模型。兼容例外仅适用于存量 UNSPECIFIED + legacy，新生产者
+// SHALL 显式设置 software_model。
 message EcuVersion {
   string ecu_id = 1;
   string hardware_part_number = 2;
-  string software_part_number = 3;
+  string software_part_number = 3; // legacy/active SINGLE_IMAGE
   string hw_version = 4;
-  string sw_version = 5;
+  string sw_version = 5;           // legacy/active SINGLE_IMAGE
+
+  optional string slot = 6;        // legacy/active SINGLE_IMAGE slot
+  optional bool active = 7;        // 缺省按 true；false 时 slot 必须存在
+  repeated SoftwareUnitVersion software_units = 8;
+  EcuSoftwareModel software_model = 9;
 }
 
 // 升级包摘要。
@@ -188,6 +233,12 @@ message PackageSummary {
   Digest package_digest = 9;
   string differential_type = 10;
   bool encrypted = 11;
+
+  // PAR-PROTO-DSN-CR-005：本包对应的软件目标与目标槽。
+  // SINGLE_IMAGE 缺省时规范化为 ECU_IMAGE；MULTI_TARGET 中条件必填。
+  // target_slot 仅表示本包安装目标槽或策略解析结果，不改变 package_id 身份。
+  optional string software_target_code = 12;
+  optional string target_slot = 13;
 }
 
 // 本地旧任务处置结果。

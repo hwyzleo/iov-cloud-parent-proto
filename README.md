@@ -28,7 +28,7 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 │   ├── vehicle-fota-v1.pb                  # Normalized FileDescriptorSet (fota)
 │   └── vagw-delivery-v1.pb                 # Normalized FileDescriptorSet (vagw cloud-internal)
 │
-├── iov-cloud-proto-vmd/                    # artifactId=proto-vmd, package iov.vmd.swinv.v1
+├── iov-cloud-proto-vmd/                    # artifactId=proto-vmd, package iov.vmd.swinv.v1 (deprecated)
 │   └── src/main/proto/iov/vmd/swinv/v1/software_inventory.proto
 ├── iov-cloud-proto-vehicle-common/         # artifactId=proto-vehicle-common, package vehicle.common.v1
 │   └── src/main/proto/vehicle/common/v1/envelope.proto
@@ -42,9 +42,9 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 
 | Module | ArtifactId | Package | Description |
 |--------|-----------|---------|-------------|
-| iov-cloud-proto-vmd | `proto-vmd` | `iov.vmd.swinv.v1` | VMD domain - Software Inventory Report |
+| iov-cloud-proto-vmd | `proto-vmd` | `iov.vmd.swinv.v1` | VMD domain - Software Inventory Report (deprecated, CR-005; 替代: FOTA inventory + OTA→VMD cloud event) |
 | iov-cloud-proto-vehicle-common | `proto-vehicle-common` | `vehicle.common.v1` | Vehicle Cloud Boundary Envelope (`VehicleMessageEnvelope`, fields 1–16, payload=10) |
-| iov-cloud-proto-fota | `proto-fota` | `vehicle.fota.v1` | FOTA contracts (TaskCheck / Consent / DownloadGrant / StageResult / InstallPermit / ExecutionEvent / Control / FinalResult / Log / Reconcile / Policy) |
+| iov-cloud-proto-fota | `proto-fota` | `vehicle.fota.v1` | FOTA contracts (TaskCheck / Consent / DownloadGrant / StageResult / InstallPermit / ExecutionEvent / Control / FinalResult / Log / Reconcile / Policy) + CR-005 EcuSoftwareModel / SoftwareUnitVersion / canonicalization-v2 |
 | iov-cloud-proto-vagw | `proto-vagw` | `vagw.v1` | VAGW cloud-internal technical delivery status (`GatewayDeliveryStatus`, topic `iov.vagw.delivery.fota`) — not a vehicle-boundary contract |
 
 ## Conventions
@@ -56,13 +56,20 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 - **Vehicle-cloud-boundary package**: `vehicle.common.v1` / `vehicle.fota.v1` — must NOT be rewritten to `iov.*`
 - **Directory = Package**: e.g., `iov-cloud-proto-fota/src/main/proto/vehicle/fota/v1/`
 - **Cloud-internal package**: `vagw.v1` — `proto-vagw` publishes `vagw.v1.Delivery.GatewayDeliveryStatus` only for `iov.vagw.delivery.fota` (Key=VIN); it MUST NOT wrap/import/duplicate `VehicleMessageEnvelope` or any `vehicle.fota.v1` message and MUST NOT be registered as a vehicle-boundary PayloadType
-- **Dependency**: `proto-fota` → `proto-vehicle-common`; VAGW → common + `proto-vagw`; IOV-OTA → common + fota + `proto-vagw`
+- **Dependency**: `proto-fota` → `proto-vehicle-common`; VAGW → common + `proto-vagw`; IOV-OTA → common + fota. VAGW 对 FOTA 只解析 common Envelope metadata 并原样转发 payload bytes，不得引入 proto-fota 或解析 EcuVersion/SoftwareUnitVersion。OTA→VMD 云内事件不使用 Proto，不归 PAR-PROTO 管理（由 iov-ota-api 与 VMD 共同治理）。
 
 ## Bootstrap & Authority Model
 
 1. `vehicle.common.v1` / `vehicle.fota.v1` were imported **byte-for-byte** from the frozen VEH-PROTO snapshot (donor provenance + per-file SHA-256 in `provenance/vehicle-proto-baseline.yaml`).
 2. After the bootstrap release passes Java generation and the joint cross-language check (Java-produced golden reference bytes + vehicle-side C++ byte-identical round-trip), authority cuts over to PAR-PROTO (see `contract_authority: par-proto` in the manifest).
 3. Post-cutover: canonical PRs originate **only** in PAR-PROTO; VEH-PROTO pins released versions and must not reverse-merge local drift.
+
+## CR-005: ECU 软件模型 / canonicalization-v2 / swinv 退役
+
+- `vehicle.fota.v1` 以纯字段追加扩展（PAR-PROTO-DSN-CR-005）：`EcuSoftwareModel`（每 ECU 软件治理模型，非 InventoryMode）、`SoftwareUnitVersion`（结构化 Target/Slot 单元）、`EcuVersion` 追加 6~9（SINGLE_IMAGE 只用 legacy 字段 3/5/6/7；MULTI_TARGET 只用 software_units[]）、`PackageSummary` 追加 12~13、`TaskCheckRequest` 追加 12（`inventory_canonicalization_version`）、`TaskCheckResponse` 追加 21~22、`ExecutionEvent` 追加 21~22、`EcuResult` 追加 11~12、`ErrorSummary` 追加 4~5。既有字段号/类型/presence 全部不变，`protocol_version=fota-v1` 不变。
+- canonicalization-v2 使用自定义确定性 TLV（`verify/inventory-canonical-v2/` 规范性 test-vector bundle）；摘要只覆盖 ECU 硬件与规范化 software units，不包含 VIN/revision/时间；v1/v2 摘要空间独立。
+- OTA→VMD 观测事件不使用 Proto、不属于 PAR-PROTO（由 iov-ota-api 与 VMD 共同治理），不新增 proto-ota module / Cloud Event Registry / Maven artifact。
+- `iov.vmd.swinv.v1.SoftwareInventoryReport` 已标记 deprecated（保留兼容审计，不删除/不改号），已被 FOTA inventory + OTA→VMD cloud event 取代。
 
 ## Build
 

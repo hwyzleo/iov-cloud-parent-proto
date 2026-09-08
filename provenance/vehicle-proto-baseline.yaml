@@ -58,6 +58,47 @@ donor_freeze:
     descriptor_set: descriptors/vehicle-fota-v1.pb
     descriptor_sha256: 56924c848d767e5e2c0cde20a1831208ab5d416035dd83ccd8354d6742a9008e
 
+# ---- PAR-PROTO-DSN-CR-005 extension (canonical, post-cutover) ---------------
+# CR-005 extends vehicle.fota.v1 by FIELD APPEND only (backward compatible,
+# protocol_version=fota-v1 unchanged), introduces canonicalization-v2 and
+# deprecates swinv. The donor_freeze block above records the CR-002 bootstrap
+# state; this section tracks the CURRENT canonical hashes after CR-005.
+# Untouched fota files (consent/package/log/reconcile/policy) keep their donor
+# hashes; touched files are the PAR-PROTO canonical authority synced ONE-WAY to
+# VEH-PROTO. FOTA PayloadType registry names are unchanged.
+# NOTE (design §7 / RD-005-8): the OTA->VMD observed event uses NO Proto and is
+# NOT part of PAR-PROTO — no proto-ota module, no Cloud Event Registry, no Maven
+# artifact. Its contract is governed by iov-ota-api + VMD. This manifest records
+# no cloud event for it.
+cr005_extension:
+  protocol_version: fota-v1
+  breaking_baseline: previous-release-empty  # buf breaking runs in CI vs prior release tag
+  fota_descriptor_sha256: 8eb241c987e7b1546c15c76be3fcb67331e9d553af2ac8a28a7d0c8cd36c8908
+  touched_files:
+    vehicle/fota/v1/types.proto: c1b51e58a7dd0cc32a9354fa7b6751261e2c1070835a1cebd203a2dfe0d5f3ce
+    vehicle/fota/v1/task.proto: 7da10ac9bb7a425aa35a2fc9d2592a12f7f17168ecb0acbfa19c654d8f6e0121
+    vehicle/fota/v1/execution.proto: 89704e71f99a0cd71dc8a4085184cabfb192645dbb3616a1a6bfa78f7dd53124
+  donor_unchanged:
+    - vehicle/fota/v1/consent.proto
+    - vehicle/fota/v1/package.proto
+    - vehicle/fota/v1/log.proto
+    - vehicle/fota/v1/reconcile.proto
+    - vehicle/fota/v1/policy.proto
+  canonicalization_v2:
+    location: verify/inventory-canonical-v2/
+    vector_bundle: vectors.yaml
+    vector_bundle_sha256: 897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b
+  golden_reference:
+    producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+    location: verify/golden/expected/
+    files:
+      fota_ecu_version_multitarget.bin:
+        sha256: 6ef920ac0b326e4fa151b45a609542341acde6092d61e00db59f07c78f424d00
+        bytes: 63
+      fota_taskcheck_canonical_v2.bin:
+        sha256: 679262822450fe98bf1b8e542bbf37656cecbe2e9222c61bc0c139e284a7d0b0
+        bytes: 123
+
 # ---- Toolchain (reproducibility) ------------------------------------------
 toolchain:
   protoc: 3.25.5
@@ -125,6 +166,16 @@ cloud_artifacts:
         vagw_delivery_unknown_enum.bin:
           sha256: 15180d9051806bb8f7cf3977cd61e7ff1fe274c970780b0ea864ba8f6c9bb08b
           bytes: 68
+
+# ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
+release_manifest:
+  inventory_canonicalization_versions: [1, 2]
+  ecu_software_models: [SINGLE_IMAGE, MULTI_TARGET]
+  deprecated_contracts:
+    - iov.vmd.swinv.v1.SoftwareInventoryReport
+  test_vector_bundle_sha256: 897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b
+  # NOTE: no cloud_events and no proto-ota artifact. The OTA->VMD observed event
+  # is NOT Proto and NOT part of PAR-PROTO (design §7 / RD-005-8).
 
 # ---- PayloadType registry (payload_type = vehicle.fota.v1.<MessageName>) ---
 # Class full-name in generated Java = payload_type string (acceptance §8).

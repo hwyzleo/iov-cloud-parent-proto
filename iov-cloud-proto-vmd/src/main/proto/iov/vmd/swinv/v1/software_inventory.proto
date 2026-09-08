@@ -2,12 +2,19 @@ syntax = "proto3";
 
 package iov.vmd.swinv.v1;
 
+option deprecated = true;  // PAR-PROTO-DSN-CR-005：swinv 退役，兼容窗口内仅审计保留
+
 option java_multiple_files = true;
 option java_package = "net.hwyz.iov.cloud.proto.vmd.swinv.v1";
 option java_outer_classname = "SoftwareInventoryProto";
 
-// Upstream: Vehicle-side software inventory self-report (payload, transparently transmitted via VAGW Envelope as bytes)
+// DEPRECATED (PAR-PROTO-DSN-CR-005 §8)：本消息不再作为新车端上报契约，新生产者
+// 不得生产该消息；兼容窗口结束后按 reserved/major-version 规则清理。替代契约为
+// iov.ota.inventory.v1.VehicleSoftwareInventoryObservedEvent（云内事件）。
+// 既有字段号/类型/语义零改动；不做 alias/oneof 包装，也不双发。
+// Upstream (historical): Vehicle-side software inventory self-report (payload, transparently transmitted via VAGW Envelope as bytes)
 message SoftwareInventoryReport {
+  option deprecated = true;
   // Vehicle-side monotonically increasing version -> sourceVersion
   uint64 manifest_version = 1;
 
