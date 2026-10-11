@@ -1,0 +1,47 @@
+name: Sync to Gitee
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure SSH
+        env:
+          GITEE_PRIVATE_KEY: ${{ secrets.GITEE_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$GITEE_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan gitee.com >> ~/.ssh/known_hosts
+
+      - name: Sync branches and tags to Gitee
+        run: |
+          git remote add gitee git@gitee.com:hwyz_leo/iov-cloud-parent-proto.git
+
+          git fetch origin \
+            '+refs/heads/*:refs/remotes/origin/*' \
+            --prune
+
+          git push gitee \
+            --prune \
+            'refs/remotes/origin/*:refs/heads/*'
+
+          git push gitee \
+            --prune \
+            'refs/tags/*:refs/tags/*'
