@@ -2,7 +2,7 @@ pipeline {
     agent { label 'java17' }
 
     parameters {
-        choice(name: 'MODULE', choices: ['root', 'vmd', 'vehicle-common', 'fota', 'vagw'], description: 'Module to build: root=publish parent pom only, others=parent+module')
+        choice(name: 'MODULE', choices: ['root', 'vmd', 'vehicle-common', 'fota', 'vagw', 'keyprov'], description: 'Module to build: root=publish parent pom only, others=parent+module')
     }
 
     environment {

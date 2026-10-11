@@ -167,6 +167,85 @@ cloud_artifacts:
           sha256: 15180d9051806bb8f7cf3977cd61e7ff1fe274c970780b0ea864ba8f6c9bb08b
           bytes: 68
 
+# ---- Vehicle-cloud security artifact (PAR-PROTO-DSN-CR-006) ---------------
+# Independent security section for proto-keyprov (security.keyprov.v1). This
+# section is isolated from the common/fota donor freeze above and from the VAGW
+# cloud_artifacts section: it MUST NOT overwrite the donor revision,
+# common/fota/vagw hashes or authority provenance. keyprov IS a vehicle-cloud
+# boundary payload contract and its payload_types are registered below.
+security_artifact:
+  keyprov:
+    module: iov-cloud-proto-keyprov
+    coordinates: net.hwyz.iov.cloud.proto:proto-keyprov:0.0.1-SNAPSHOT
+    packages: [security.keyprov.v1]
+    depends_on: [proto-vehicle-common]
+    proto_file: security/keyprov/v1/key_provisioning.proto
+    proto_sha256: d99215300cb9c41ddad22361af5feeefe1e4a2f1b57ac724d36dcc67b3b975af
+    descriptor_set: descriptors/security-keyprov-v1.pb
+    descriptor_sha256: 7aeffebe7f478902ab3b1007522ac32084c1f0441db00da000c6d61e568c1f9b
+    source_bundle: security-keyprov-v1-sources.tar.gz
+    service: security.keyprov
+    protocol_version: keyprov-v1
+    envelope: vehicle.common.v1.VehicleMessageEnvelope
+    topics:
+      up: vehicle/{ecu_uid}/up/keyprov
+      down: vehicle/{ecu_uid}/down/keyprov
+    runtime_dependency: protobuf-java
+    # Java-produced regression reference bytes: VEH-PROTO/TBOX generate C++ from
+    # the released source / DescriptorSet and MUST round-trip byte-identically.
+    golden_reference:
+      producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+      location: verify/golden/expected/
+      files:
+        keyprov_request.bin:
+          sha256: 964184dd8bd6914dc2f97888baec83335bfeaeb5669c2400b14ec52eac32b055
+          bytes: 169
+        keyprov_response_success.bin:
+          sha256: 4b80c0d8250ad45ff8bf991332c63d863910bad90771bb434f037f18bafa8fbb
+          bytes: 268
+        keyprov_ack.bin:
+          sha256: 0e241a3aac817d9cb8c25bae9de30a744c900360512cdceef97c1190731eb789
+          bytes: 106
+        keyprov_ack_result.bin:
+          sha256: 98cf6d1193569552342c655a021f87852de0fed90aef8c708a000205513da23f
+          bytes: 22
+        keyprov_status_request.bin:
+          sha256: 80d2b2f52b4c0db4c0895eff90bf7d09d8ed36461f3b7293b2ddad6694543dfd
+          bytes: 20
+        keyprov_status_response.bin:
+          sha256: 3abd995327b01325545742e33220fa040354c87537a23a4fefc783978515a064
+          bytes: 74
+        keyprov_unknown_field.bin:
+          sha256: 95e969db516cf08ab03fe375aaee8a4a26038f1d11c26e5e3b6ac8229c7eef06
+          bytes: 173
+        keyprov_unknown_enum.bin:
+          sha256: a26857439f4e6066864a3c7d8bec32bfed0568830072e95eaa71c63c0965270d
+          bytes: 170
+        envelope_keyprov_request.bin:
+          sha256: 6bd0b70d226bd82728553391f2e82c0e51662c0864b64340fdf2a841e2572d7e
+          bytes: 322
+        envelope_keyprov_response.bin:
+          sha256: 26d1871fb021da92f2823dca0c4030331b747e9dd6110e338fe5a35dd43ea863
+          bytes: 440
+        envelope_keyprov_ack.bin:
+          sha256: d4930e3b2f4fc5453bf35052729c65ea65cee91c5d96cf1da5826ef867da196e
+          bytes: 272
+        envelope_keyprov_ack_result.bin:
+          sha256: bfe72ca6b54baaefbd434ab7cd6d98b999a944145b3f3648b100a5c1c199d05c
+          bytes: 199
+        envelope_keyprov_status_request.bin:
+          sha256: 02bd2b09df4c4c85cdffa07f0b0eea6d96b92ddc1fa77236f9bcc0f461a4677b
+          bytes: 184
+        envelope_keyprov_status_response.bin:
+          sha256: 83cf8fcb8d9a5e92223c1a8705128af70b7af2e97b2eeaa433256e0138063ac0
+          bytes: 263
+        envelope_keyprov_unknown_field.bin:
+          sha256: 1beba97be18dc894dbe28bd8f47c59b7e326628131c37fb1233edac9015067a7
+          bytes: 326
+        envelope_keyprov_unknown_enum.bin:
+          sha256: f233c810b26548e8d12cde74444a0e135f6f67abe0ab6966ef6aa70791ec1f3e
+          bytes: 323
+
 # ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
 release_manifest:
   inventory_canonicalization_versions: [1, 2]
@@ -174,6 +253,15 @@ release_manifest:
   deprecated_contracts:
     - iov.vmd.swinv.v1.SoftwareInventoryReport
   test_vector_bundle_sha256: 897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b
+  # PAR-PROTO-DSN-CR-006 §6: independent security artifact for keyprov.
+  modules: [proto-vmd, proto-vehicle-common, proto-fota, proto-vagw, proto-keyprov]
+  security_artifact:
+    coordinate: net.hwyz.iov.cloud.proto:proto-keyprov:0.0.1-SNAPSHOT
+    packages: [security.keyprov.v1]
+    depends_on: [proto-vehicle-common]
+    descriptor: descriptors/security-keyprov-v1.pb
+    source_bundle: security-keyprov-v1-sources.tar.gz
+    sha256: 7aeffebe7f478902ab3b1007522ac32084c1f0441db00da000c6d61e568c1f9b
   # NOTE: no cloud_events and no proto-ota artifact. The OTA->VMD observed event
   # is NOT Proto and NOT part of PAR-PROTO (design §7 / RD-005-8).
 
@@ -207,3 +295,12 @@ payload_type_registry:
     - vehicle.fota.v1.PolicyResponse
   common:
     - vehicle.common.v1.VehicleMessageEnvelope
+  # PAR-PROTO-DSN-CR-006: keyprov payload_type = exact security.keyprov.v1.<MessageName>.
+  # No wildcard / short-name / reflective fallback resolution is permitted.
+  keyprov:
+    - security.keyprov.v1.KeyProvisioningRequest
+    - security.keyprov.v1.KeyProvisioningResponse
+    - security.keyprov.v1.KeyProvisioningAck
+    - security.keyprov.v1.KeyProvisioningAckResult
+    - security.keyprov.v1.KeyProvisioningStatusRequest
+    - security.keyprov.v1.KeyProvisioningStatusResponse

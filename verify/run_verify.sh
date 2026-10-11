@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_verify.sh — PAR-PROTO-DSN-CR-002/003/004/005 verification harness
+# run_verify.sh — PAR-PROTO-DSN-CR-002/003/004/005/006 verification harness
 #
 # Reproduces the release gates runnable here:
 #   1. Maven reactor build (Java generation)            — gate 5 (Java)
@@ -16,6 +16,9 @@
 #   10. canonicalization-v2 test vectors (bundle + invariants)  — §10.3
 #   11. swinv deprecated + VAGW dep tree + raw Envelope bytes unchanged — §10.1.5/§10.4
 #   12. CR-005 golden producer (MULTI_TARGET fota bytes)
+#   13. CR-006 keyprov contract check (descriptor + generated class + §4.3/§4.4
+#       gates + §5 sensitivity scan)                     — gates 2/3/4/8
+#   14. CR-006 keyprov golden producer (6 payloads + Envelope wrapping) — acc. #1/#2
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -27,7 +30,7 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/12] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/14] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
@@ -47,10 +50,11 @@ step 2 "buf lint (STANDARD) on active modules"
 if command -v buf >/dev/null 2>&1; then
   if buf lint iov-cloud-proto-vehicle-common/src/main/proto >/dev/null 2>&1 \
      && buf lint iov-cloud-proto-fota/src/main/proto >/dev/null 2>&1 \
-     && buf lint iov-cloud-proto-vagw/src/main/proto >/dev/null 2>&1; then
-    pass "buf lint common + fota + vagw"
+     && buf lint iov-cloud-proto-vagw/src/main/proto >/dev/null 2>&1 \
+     && buf lint iov-cloud-proto-keyprov/src/main/proto >/dev/null 2>&1; then
+    pass "buf lint common + fota + vagw + keyprov"
   else
-    fail "buf lint common + fota + vagw"
+    fail "buf lint common + fota + vagw + keyprov"
   fi
 else
   echo "  (buf not installed — gate enforced in CI)"
@@ -123,6 +127,13 @@ grep -q "556e3a3d3916e65ce03e392440911d5d01ae899d61777cd8a7b8e84679c913d7" /tmp/
 shasum -a 256 verify/inventory-canonical-v2/vectors.yaml \
   > /tmp/cr005_checksums.txt
 grep -q "897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b" /tmp/cr005_checksums.txt && pass "canonical-v2 vector bundle sha256 matches manifest" || fail "canonical-v2 vector bundle sha256 mismatch"
+# ---- CR-006: keyprov source + descriptor (security_artifact section) ----
+shasum -a 256 \
+  iov-cloud-proto-keyprov/src/main/proto/security/keyprov/v1/key_provisioning.proto \
+  descriptors/security-keyprov-v1.pb \
+  > /tmp/cr006_checksums.txt
+grep -q "d99215300cb9c41ddad22361af5feeefe1e4a2f1b57ac724d36dcc67b3b975af" /tmp/cr006_checksums.txt && pass "keyprov source sha256 matches manifest" || fail "keyprov source sha256 mismatch"
+grep -q "7aeffebe7f478902ab3b1007522ac32084c1f0441db00da000c6d61e568c1f9b" /tmp/cr006_checksums.txt && pass "keyprov descriptor sha256 matches manifest" || fail "keyprov descriptor sha256 mismatch"
 
 # ---- 5. Descriptor determinism ---------------------------------------------
 step 5 "DescriptorSet determinism (regenerate + compare)"
@@ -139,6 +150,9 @@ if [ -x "$PROTOC" ]; then
   "$PROTOC" -I iov-cloud-proto-vagw/src/main/proto \
     --descriptor_set_out=/tmp/vagw-regenerated.pb --include_imports \
     vagw/v1/delivery.proto
+  "$PROTOC" -I iov-cloud-proto-keyprov/src/main/proto \
+    --descriptor_set_out=/tmp/keyprov-regenerated.pb --include_imports \
+    security/keyprov/v1/key_provisioning.proto
   if cmp -s /tmp/common-regenerated.pb descriptors/vehicle-common-v1.pb; then
     pass "common descriptor deterministic"
   else
@@ -154,6 +168,11 @@ if [ -x "$PROTOC" ]; then
   else
     fail "vagw descriptor non-deterministic"
   fi
+  if cmp -s /tmp/keyprov-regenerated.pb descriptors/security-keyprov-v1.pb; then
+    pass "keyprov descriptor deterministic"
+  else
+    fail "keyprov descriptor non-deterministic"
+  fi
 else
   echo "  (pinned protoc 3.25.5 not cached — run 'mvn compile' first)"
 fi
@@ -164,7 +183,7 @@ if [ -f "$PB_JAR" ]; then
   mkdir -p verify/out
   javac -cp "$PB_JAR" -d verify/out verify/PayloadTypeCheck.java
   java -cp "$PB_JAR:verify/out" PayloadTypeCheck provenance/vehicle-proto-baseline.yaml \
-    descriptors/vehicle-common-v1.pb descriptors/vehicle-fota-v1.pb
+    descriptors/vehicle-common-v1.pb descriptors/vehicle-fota-v1.pb descriptors/security-keyprov-v1.pb
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi
@@ -269,6 +288,32 @@ if [ -f "$PB_JAR" ]; then
   pass "CR-005 golden reference bytes produced (fota_ecu_version_multitarget / fota_taskcheck_canonical_v2)"
   shasum -a 256 verify/golden/expected/fota_ecu_version_multitarget.bin \
     verify/golden/expected/fota_taskcheck_canonical_v2.bin
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 13. CR-006 keyprov contract check (gates 2/3/4/8) --------------------
+step 13 "CR-006 keyprov contract (descriptor + generated class + §4.3/§4.4/§5)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes" \
+    -d verify/out verify/KeyprovContractCheck.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:verify/out" \
+    KeyprovContractCheck descriptors/security-keyprov-v1.pb
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 14. CR-006 keyprov golden producer (§3/§7, acceptance #1/#2) ----------
+step 14 "CR-006 keyprov golden producer (6 payloads + Envelope wrapping)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/golden/expected verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes" \
+    -d verify/out verify/KeyprovGoldenProducer.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
+    KeyprovGoldenProducer
+  pass "keyprov golden reference bytes produced (request/response/ack/ack_result/status + Envelope)"
+  shasum -a 256 verify/golden/expected/keyprov_*.bin verify/golden/expected/envelope_keyprov_*.bin
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi

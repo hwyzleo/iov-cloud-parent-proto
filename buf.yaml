@@ -4,6 +4,7 @@ modules:
   - path: iov-cloud-proto-vehicle-common/src/main/proto
   - path: iov-cloud-proto-fota/src/main/proto
   - path: iov-cloud-proto-vagw/src/main/proto
+  - path: iov-cloud-proto-keyprov/src/main/proto
 lint:
   use:
     - STANDARD

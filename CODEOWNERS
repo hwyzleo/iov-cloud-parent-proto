@@ -21,3 +21,8 @@
 
 # VAGW domain - cloud-internal technical delivery status (not vehicle boundary)
 /iov-cloud-proto-vagw/                   @vagw-team @iov-ota
+
+# KeyProv domain - V2C initial business key provisioning security contract
+# Envelope mapping requires security payload owner + vehicle-common owner;
+# keyprov field semantics require VMD + VAGW + TBOX-TSP + TBOX-SEC/VEH-PROTO owners.
+/iov-cloud-proto-keyprov/                @vehicle-security @vmd-team @vagw-team @tbox-tsp @tbox-sec
