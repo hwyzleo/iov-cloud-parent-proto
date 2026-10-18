@@ -180,9 +180,9 @@ security_artifact:
     packages: [security.keyprov.v1]
     depends_on: [proto-vehicle-common]
     proto_file: security/keyprov/v1/key_provisioning.proto
-    proto_sha256: d99215300cb9c41ddad22361af5feeefe1e4a2f1b57ac724d36dcc67b3b975af
+    proto_sha256: ea4ddae8e74d11126bb35b3948a4abcc71bbe849b7949bfd2f341bbfc2bb6d19
     descriptor_set: descriptors/security-keyprov-v1.pb
-    descriptor_sha256: 7aeffebe7f478902ab3b1007522ac32084c1f0441db00da000c6d61e568c1f9b
+    descriptor_sha256: 6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f
     source_bundle: security-keyprov-v1-sources.tar.gz
     service: security.keyprov
     protocol_version: keyprov-v1
@@ -246,6 +246,51 @@ security_artifact:
           sha256: f233c810b26548e8d12cde74444a0e135f6f67abe0ab6966ef6aa70791ec1f3e
           bytes: 323
 
+# ---- PAR-PROTO-DSN-CR-007 additive extension (ECDH-ES v1 envelope) --------
+# CR-007 appends to security.keyprov.v1 by FIELD/MESSAGE/ENUM ADD ONLY:
+#   + enum KeyEnvelopeFormat
+#   + message EcdhEsP256EnvelopeParametersV1
+#   + KeyProvisioningRequest.supported_envelope_formats = 11
+#   + WrappedKeyItem.envelope_digest = 10 / key_check_value = 11 / envelope_format = 12
+#   + KeyImportItemResult.envelope_digest = 7 / key_check_value = 8 / envelope_format = 9
+# Field numbers 1..9, message names, package and protocol_version=keyprov-v1 are
+# UNCHANGED. The CR-006 golden hashes in the keyprov.golden_reference block above
+# are intentionally still authoritative: the old payload bytes are byte-identical
+# (proof of additive wire compatibility, verified by
+# verify/KeyprovCr007IntegrationCheck.java).
+cr007_extension:
+  protocol_version: keyprov-v1
+  additive_wire_compatible: true
+  breaking_baseline: previous-release-empty  # buf breaking runs in CI vs prior release tag
+  # Design §4.2 does not fix the businessKeyVersion encoding inside envelopeDigest;
+  # this repo pins the §5 proofInput convention (uint64be, 8 bytes) and freezes it
+  # in the vectors below (documented in key_provisioning.proto header).
+  envelope_digest_business_key_version_encoding: uint64be
+  keyprov_descriptor_sha256: 6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f
+  canonical_reference_impl: verify/KeyprovCanonicalV1.java
+  contract_check: verify/KeyprovContractCheck.java
+  integration_check: verify/KeyprovCr007IntegrationCheck.java
+  golden_reference:
+    producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+    location: verify/golden/expected/
+    files:
+      keyprov_ecdh_v1_parameters.bin:            { sha256: 86c5059c217aaea74dc0dba488ebab88d4e2fc409e4fb694b044c476652a990c, bytes: 303 }
+      keyprov_ecdh_v1_request.bin:               { sha256: 7b67b3e3e9f9e7fd7389a6c943ab32fb867b457c0580cfee1482385eed939ec7, bytes: 171 }
+      keyprov_ecdh_v1_response.bin:              { sha256: 322b5df067fff9fe7855c6f8e3ab8bd12e985ecdf1cc99bcce6895d3f8da28da, bytes: 948 }
+      keyprov_ecdh_v1_ack.bin:                   { sha256: c4ec419e0da00f897a58295875bf6bc25786ea5efcaf55f679e9ab541a0d6bb5, bytes: 248 }
+      keyprov_ecdh_v1_envelope_digest_up.bin:    { sha256: 03cef07f69c3b33af26409720d47577d92f6b442721a72d9f88b68ce2435f63e, bytes: 32 }
+      keyprov_ecdh_v1_envelope_digest_down.bin:  { sha256: 65cea2335960f76b18ec27abba6c558848fedd8f47b05376e852b8fec94edef4, bytes: 32 }
+      keyprov_ecdh_v1_aad_digest.bin:            { sha256: 465755c86aea381d5b1682dbe15801d6894096d1f309768fd061b7cdbf2345a0, bytes: 32 }
+      keyprov_ecdh_v1_kcv_up.bin:                { sha256: 0393e6872a49d3ddd462a1e4f24b8a0f215e81d2cb8fc3a68f9b742ea95c0799, bytes: 3 }
+      keyprov_ecdh_v1_kcv_down.bin:              { sha256: 4a5604b484267ba0d8e8b2db526bfe6c38db1b9ad65226e043dbc38993482d7b, bytes: 3 }
+      keyprov_ecdh_v1_proof_input_up.bin:        { sha256: 011e5f381fb949dcb5d8e3bf31f560594682c1cedf34c3a165209365d2571b89, bytes: 149 }
+      keyprov_ecdh_v1_proof_input_down.bin:      { sha256: 33ea5a7451bbccaccc19f4e0a18c9c9a240864f7a35dd53e8d9f4f314a3d8569, bytes: 149 }
+      keyprov_ecdh_v1_unknown_field.bin:         { sha256: e8d3c121701fd3d375fcbfee9b5b31e0ce0578e1ff90cc8711b012b6886e9f49, bytes: 175 }
+      keyprov_ecdh_v1_unknown_format.bin:        { sha256: c414868b0d123c396a571bbc71f2e02ccdea11b31ce16dcc968ddc4e7885ec05, bytes: 172 }
+      envelope_keyprov_ecdh_v1_request.bin:      { sha256: e81263e85258ee9290327c2b2e306ecc0b4d10db5aa9cd2df60f4ea752912437, bytes: 329 }
+      envelope_keyprov_ecdh_v1_response.bin:     { sha256: 2c8c8d21ae8a57b128874cc532a3859668d38aca88073d1ba76b9a0843fa49ff, bytes: 1130 }
+      envelope_keyprov_ecdh_v1_ack.bin:          { sha256: 1ce807b00877bccada345578b21120021fbb35c5ae8185c72eb62a44a02bd3b6, bytes: 425 }
+
 # ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
 release_manifest:
   inventory_canonicalization_versions: [1, 2]
@@ -253,7 +298,7 @@ release_manifest:
   deprecated_contracts:
     - iov.vmd.swinv.v1.SoftwareInventoryReport
   test_vector_bundle_sha256: 897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b
-  # PAR-PROTO-DSN-CR-006 §6: independent security artifact for keyprov.
+  # PAR-PROTO-DSN-CR-006 §6 / CR-007: independent security artifact for keyprov.
   modules: [proto-vmd, proto-vehicle-common, proto-fota, proto-vagw, proto-keyprov]
   security_artifact:
     coordinate: net.hwyz.iov.cloud.proto:proto-keyprov:0.0.1-SNAPSHOT
@@ -261,7 +306,11 @@ release_manifest:
     depends_on: [proto-vehicle-common]
     descriptor: descriptors/security-keyprov-v1.pb
     source_bundle: security-keyprov-v1-sources.tar.gz
-    sha256: 7aeffebe7f478902ab3b1007522ac32084c1f0441db00da000c6d61e568c1f9b
+    sha256: 6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f
+    # CR-007: envelope v1 capability requires supported_envelope_formats +
+    # DescriptorSet hash + PAR-PROTO release + FW-SEC Provider readiness.
+    envelope_formats: [KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1]
+    canonical_reference_impl: verify/KeyprovCanonicalV1.java
   # NOTE: no cloud_events and no proto-ota artifact. The OTA->VMD observed event
   # is NOT Proto and NOT part of PAR-PROTO (design §7 / RD-005-8).
 
