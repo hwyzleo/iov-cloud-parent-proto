@@ -10,6 +10,8 @@ option java_outer_classname = "VehicleKeyProvisioningProto";
 // security.keyprov.v1 - V2C 初始业务密钥开通 canonical wire
 //   (PAR-PROTO-REQ-CR-006 / PAR-PROTO-DSN-CR-006)
 //   (PAR-PROTO-REQ-CR-007 / PAR-PROTO-DSN-CR-007 — ECDH-ES v1 兼容增量)
+//   (PAR-PROTO-REQ-CR-008 / PAR-PROTO-DSN-CR-008 — 每用途 ECDSA P-256/P1363
+//    Import Attestation 兼容增量)
 // =============================================================================
 // SSOT：本文件是 TBOX 首次注册激活 V2C 业务密钥开通的唯一车云 wire 权威来源。
 // TBOX-TSP、TBOX-MQTT、VAGW、VMD 及 VEH-PROTO 只能锁版消费本文件发布的
@@ -52,7 +54,7 @@ option java_outer_classname = "VehicleKeyProvisioningProto";
 //   derivation_version/hkdf_context_version                        <= 64  UTF-8 bytes
 //   wrapped_key                                                    <= 4096 bytes/item
 //   parameters                                                     <= 2048 bytes/item
-//   import_proof                                                   <= 1024 bytes/item
+//   import_proof                         CR-008 成功项恰好 64 bytes；遗留上限 <= 1024 bytes/item
 //   ProtocolError.message                                          <= 256 UTF-8 bytes
 //   payload（Envelope.payload 总长）                               <= 16384 bytes
 // 解码前先执行 Envelope/payload 总长门禁；解码后执行字段与 repeated count 门禁。
@@ -99,6 +101,40 @@ option java_outer_classname = "VehicleKeyProvisioningProto";
 //     keyCheckValue 必须与本次 Response 一一匹配；
 //   * duplicate ACK：相同 canonical digest 幂等返回，不同 digest 拒绝冲突；
 //   * 只有 TBOX-SEC 原子提交两个用途后才允许 IMPORTED，VMD 才可激活目录版本。
+//
+// ---- CR-008 每用途 Import Attestation（PAR-PROTO-DSN-CR-008 §3/§4/§5/§7）--
+//   * 沿用 KeyImportItemResult.import_proof=5 item 级承载，additive 追加受治理
+//     算法枚举 import_proof_algorithm=10 与 recipient_certificate_digest=11；
+//     字段 1~9 保持不变。字段 6 proof_algorithm 保持 string wire type 并 deprecated，
+//     仅遗留解析；新生产者留空、新消费者以字段 10 为唯一算法事实源。
+//   * 成功 IMPORTED 且 envelope format 为 ECDH-ES P-256 v1 时必须满足：
+//       import_proof_algorithm == IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363
+//       len(import_proof) == 64（P1363 r(32)||s(32)，low-S）
+//       len(recipient_certificate_digest) == 32
+//       proof_algorithm == ""（遗留字段不得形成第二事实源）
+//     失败/未知 item 不得伪造成功 proof；未知/0 枚举、遗留字符串非空或组合冲突
+//     均 fail-closed。
+//   * 唯一生产 canonical 方法为版本化 proofInputV1（八段扁平编码，各段 uint32be
+//     长度前缀）；旧嵌套/字符串方法只保留兼容回归，不参与 readiness/capability。
+//       proofInputV1 = concat(
+//         segment(UTF8("openiov|keyprov-ack|v1")), segment(UTF8(requestId)),
+//         segment(UTF8(businessDomain)), segment(enumValue(purpose)),
+//         segment(SHA-256(UTF8(keyId))), segment(uint64be(businessKeyVersion)),
+//         segment(envelopeDigest), segment(keyCheckValue))
+//       segment(x) = uint32be(len(x)) || x；共且仅有八个顶层 segment。
+//   * businessDomain 使用 String，首期只接受完整值严格为 "V2C_COMM"；禁止 trim、
+//     大小写折叠、alias 或 fallback。purpose 固定 UNSPECIFIED=0（生产拒绝）、
+//     UPLINK=1、DOWNLINK=2，禁止 ordinal()/name() 映射。businessKeyVersion 有效
+//     范围 1..2^63-1，编码固定 uint64be 8 字节。
+//   * 签名固定 ECDSA P-256/SHA-256、IEEE-P1363 r(32)||s(32)、low-S；不接受 DER、
+//     高 S、HMAC、CMAC 或算法猜测。wire 只承载证明材料：设备签名归 TBOX-SEC，
+//     真实 P-256 验签归 FW-SEC；PAR-PROTO 不定义私钥引用、不实现真实验签。
+//   * 同 requestId 重放返回 journal 中原 proof bytes 且不再次签名；VMD 逐项完成
+//     purpose/keyId/version/format/digest/KCV/证书摘要绑定后调用 FW-SEC 验签，
+//     两个 purpose 全部通过后才可原子激活。字段相等、canonical matches 或 KCV
+//     正确都不得替代真实 ECDSA 验签。
+//   * DescriptorSet lock 与 breaking-change baseline 必须纳入字段 10/11 与
+//     ImportProofAlgorithm，并证明仅新增 enum 与字段。
 //
 // ---- 敏感性与日志分类（CR-006 §5 + CR-007 §7）-----------------------------
 //   wrapped_key / parameters                 SecretCiphertext   允许受控传输；禁日志、禁普通持久化
@@ -173,6 +209,14 @@ enum WrappingSuite {
 enum KeyEnvelopeFormat {
   KEY_ENVELOPE_FORMAT_UNSPECIFIED = 0;        // 禁止用于有效成功项
   KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1 = 1;    // parameters = EcdhEsP256EnvelopeParametersV1
+}
+
+// 每用途 import proof 算法（PAR-PROTO-DSN-CR-008 §3）。字段 10 是新生产流唯一的
+// 算法事实源；字段 6 的遗留 string 不得作为算法权威。枚举只允许追加，0 保留且生产
+// 拒绝。首期唯一生产算法为 ECDSA P-256/SHA-256/IEEE-P1363 64B low-S。
+enum ImportProofAlgorithm {
+  IMPORT_PROOF_ALGORITHM_UNSPECIFIED = 0;             // 禁止用于成功项
+  IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363 = 1; // r(32)||s(32)，low-S
 }
 
 // 稳定错误对象。仅承载稳定 code、retryable、action 与脱敏 message；
@@ -264,22 +308,35 @@ message KeyProvisioningResponse {
 }
 
 // 单个件内导入结果。import_proof 为 SecurityProof（非敏感持钥证明），
-// 允许 ACK 传输但禁止普通日志与长期 Store；与 proof_algorithm 成对出现。
+// 允许 ACK 传输但禁止普通日志与长期 Store。
+//
+// CR-008 §3.1 成功 item 约束（result=IMPORTED 且 format=ECDH-ES P-256 v1）：
+//   import_proof_algorithm == IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363
+//   len(import_proof) == 64；len(recipient_certificate_digest) == 32
+//   proof_algorithm == ""（遗留字段留空，不得形成第二事实源）
+// 失败/未知 item 不得伪造成功 proof；未知/0 枚举、遗留字符串非空或组合冲突 fail-closed。
 message KeyImportItemResult {
   KeyPurpose purpose = 1;
   string key_id = 2;                             // <= 128 bytes
-  uint64 business_key_version = 3;
+  uint64 business_key_version = 3;               // 成功项有效范围 1..2^63-1
   KeyImportResult result = 4;
-  bytes import_proof = 5;                        // <= 1024 bytes
-  string proof_algorithm = 6;                    // <= 128 UTF-8 bytes
+  bytes import_proof = 5;                        // CR-008 成功项恰好 64 bytes；遗留上限 <= 1024 bytes
+  string proof_algorithm = 6 [deprecated = true]; // <= 128 UTF-8 bytes；仅遗留解析，新生产流留空
   // CR-007 §3/§5：成功 ACK 必须精确回传本次 Response 的 envelopeDigest/KCV/format。
-  // proofInput 的 canonical 输入固定为：
-  //   lengthPrefixed("openiov|keyprov-ack|v1", requestId, businessDomain, purpose,
-  //                  SHA-256(UTF8(keyId)), uint64be(businessKeyVersion),
-  //                  envelopeDigest, keyCheckValue)
+  // CR-008 §4.1：生产签名/验签唯一使用版本化 proofInputV1 八段扁平编码：
+  //   proofInputV1 = concat(
+  //     segment(UTF8("openiov|keyprov-ack|v1")), segment(UTF8(requestId)),
+  //     segment(UTF8(businessDomain)), segment(enumValue(purpose)),
+  //     segment(SHA-256(UTF8(keyId))), segment(uint64be(businessKeyVersion)),
+  //     segment(envelopeDigest), segment(keyCheckValue))
+  //   segment(x) = uint32be(len(x)) || x，共且仅有八个顶层 segment。
   bytes envelope_digest = 7;                     // 恰好 32 bytes
   bytes key_check_value = 8;                     // 恰好 3 bytes
   KeyEnvelopeFormat envelope_format = 9;
+  // CR-008 §3：受治理 import proof 算法，新生产流唯一算法事实源。
+  ImportProofAlgorithm import_proof_algorithm = 10;
+  // CR-008 §3.1：provisioning 绑定证书的 SHA-256 策略摘要，恰好 32 bytes。
+  bytes recipient_certificate_digest = 11;
 }
 
 // 上行：件内导入 ACK。不得包含 Wrapped Key、明文密钥、slot、设备私钥引用或 KMS keyRef。

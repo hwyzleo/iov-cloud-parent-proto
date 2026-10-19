@@ -24,6 +24,11 @@
 #                                                        — CR-007 §4/§5/§7/§9 1-3
 #   16. CR-007 keyprov integration check (relay byte-for-byte + additive downgrade
 #       + capability negotiation + replay)               — CR-007 §8/§9 5-7
+#   17. CR-008 keyprov import attestation golden producer (proofInputV1 vectors +
+#       CR-008 ack with fields 10/11 + P1363 low-S placeholder) — CR-008 §3/§4/§5
+#   18. CR-008 keyprov integration check (relay + additive downgrade + fail-closed
+#       unknown/legacy algorithm + P1363 format/range + proofInputV1 binding)
+#                                                        — CR-008 §3/§4/§5/§9
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -35,7 +40,7 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/16] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/18] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
@@ -132,15 +137,17 @@ grep -q "556e3a3d3916e65ce03e392440911d5d01ae899d61777cd8a7b8e84679c913d7" /tmp/
 shasum -a 256 verify/inventory-canonical-v2/vectors.yaml \
   > /tmp/cr005_checksums.txt
 grep -q "897a8abb811441a944c9eea2a2c61ccee4f2fec88c0d7ab00206cd0ea055b89b" /tmp/cr005_checksums.txt && pass "canonical-v2 vector bundle sha256 matches manifest" || fail "canonical-v2 vector bundle sha256 mismatch"
-# ---- CR-006/007: keyprov source + descriptor (security_artifact section) ----
-# CR-007 appended fields/messages/enum (additive); hashes track the current
-# canonical source. CR-006 payload bytes stay byte-identical (step 14).
+# ---- CR-006/007/008: keyprov source + descriptor (security_artifact) -------
+# CR-007 appended fields/messages/enum (additive); CR-008 appended
+# ImportProofAlgorithm + KeyImportItemResult fields 10/11 and deprecated field 6.
+# Hashes track the current canonical source. CR-006/007 payload bytes stay
+# byte-identical (steps 14/15/17).
 shasum -a 256 \
   iov-cloud-proto-keyprov/src/main/proto/security/keyprov/v1/key_provisioning.proto \
   descriptors/security-keyprov-v1.pb \
   > /tmp/cr006_checksums.txt
-grep -q "ea4ddae8e74d11126bb35b3948a4abcc71bbe849b7949bfd2f341bbfc2bb6d19" /tmp/cr006_checksums.txt && pass "keyprov source sha256 matches manifest (CR-007)" || fail "keyprov source sha256 mismatch"
-grep -q "6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f" /tmp/cr006_checksums.txt && pass "keyprov descriptor sha256 matches manifest (CR-007)" || fail "keyprov descriptor sha256 mismatch"
+grep -q "5e737477ddc1cae57a8ac2350870c7614f2b2f378e17a51db15a03321cd944dd" /tmp/cr006_checksums.txt && pass "keyprov source sha256 matches manifest (CR-008)" || fail "keyprov source sha256 mismatch"
+grep -q "cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230" /tmp/cr006_checksums.txt && pass "keyprov descriptor sha256 matches manifest (CR-008)" || fail "keyprov descriptor sha256 mismatch"
 
 # ---- 5. Descriptor determinism ---------------------------------------------
 step 5 "DescriptorSet determinism (regenerate + compare)"
@@ -364,6 +371,44 @@ if [ -f "$PB_JAR" ]; then
     -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr007IntegrationCheck.java
   java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
     KeyprovCr007IntegrationCheck
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 17. CR-008 keyprov import attestation golden producer (§3/§4/§5/§9) --
+step 17 "CR-008 keyprov import attestation golden producer (proofInputV1 + ack + P1363)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/golden/expected verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes" \
+    -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr008GoldenProducer.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
+    KeyprovCr008GoldenProducer
+  pass "CR-008 golden reference bytes produced (proofInputV1 vectors + CR-008 ack + Envelope)"
+  shasum -a 256 verify/golden/expected/keyprov_cr008_*.bin \
+    verify/golden/expected/envelope_keyprov_cr008_*.bin > /tmp/cr008_golden_checksums.txt
+  grep -q "f998b4800f01850a8768d90164912657293ee59cefc45f1f9ea6fb1312c17110" /tmp/cr008_golden_checksums.txt \
+    && grep -q "2a7685c06d37cac2498d8318bfbc7d1d96dd59b74f115638d104263d304787d3" /tmp/cr008_golden_checksums.txt \
+    && grep -q "c67957e7f9fa588dad6f1e60737185b5af92a874cd66bbd09d4ff5fc24cbd383" /tmp/cr008_golden_checksums.txt \
+    && pass "CR-008 golden hashes match manifest (proofInputV1 up/down + ack)" \
+    || fail "CR-008 golden hashes differ from manifest"
+  # CR-007 legacy proofInput golden must remain byte-identical (additive wire).
+  shasum -a 256 verify/golden/expected/keyprov_ecdh_v1_proof_input_up.bin \
+    > /tmp/cr008_legacy_check.txt
+  grep -q "011e5f381fb949dcb5d8e3bf31f560594682c1cedf34c3a165209365d2571b89" /tmp/cr008_legacy_check.txt \
+    && pass "CR-007 proofInput golden bytes unchanged by CR-008 (legacy regression only)" \
+    || fail "CR-007 proofInput golden bytes changed by CR-008"
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 18. CR-008 keyprov integration check (§3/§4/§5/§9 items 2-8) ----------
+step 18 "CR-008 keyprov integration (relay + additive downgrade + fail-closed + P1363)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes" \
+    -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr008IntegrationCheck.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
+    KeyprovCr008IntegrationCheck
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi

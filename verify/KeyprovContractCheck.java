@@ -14,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 import net.hwyz.iov.security.keyprov.v1.EcdhEsP256EnvelopeParametersV1;
+import net.hwyz.iov.security.keyprov.v1.ImportProofAlgorithm;
 import net.hwyz.iov.security.keyprov.v1.KeyEnvelopeFormat;
 import net.hwyz.iov.security.keyprov.v1.KeyImportItemResult;
 import net.hwyz.iov.security.keyprov.v1.KeyImportResult;
@@ -28,7 +29,8 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
 
 /**
  * KeyProv contract check (PAR-PROTO-DSN-CR-006 §2/§4/§7, CR-007 §3/§4/§5/§6/§7,
- * REQ US-013..US-020 / REQ-CR-007 acceptance #1..#7).
+ * CR-008 §3/§4/§5, REQ US-013..US-020 / REQ-CR-007 acceptance #1..#7 /
+ * REQ-CR-008 US-039).
  *
  * Validates the committed normalized DescriptorSet
  * (descriptors/security-keyprov-v1.pb) and the generated Java classes:
@@ -42,6 +44,8 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
  *     constants shared with the vehicle-side C++ contract-check
  *   - CR-007 §6.1 capability negotiation, §6.2 response gates, §6.3 ACK binding,
  *     §7 envelope v1 exact lengths / P-256 point / suite-format allowlist
+ *   - CR-008 §3/§4/§5 ImportProofAlgorithm + fields 10/11 + deprecated field 6,
+ *     V2C_COMM / purpose 1|2 / version range and P1363 low-S gates
  *   - §5 sensitivity classification static scan
  */
 public class KeyprovContractCheck {
@@ -58,6 +62,7 @@ public class KeyprovContractCheck {
   static final int MAX_IMPORT_PROOF_BYTES = 1024;
   static final int MAX_ERROR_MESSAGE_BYTES = 256;
   static final String PROTOCOL_VERSION = "keyprov-v1"; // opaque Envelope allowlist value
+  static final int P1363_SIGNATURE_BYTES = 64;        // CR-008 ECDSA P-256 r(32)||s(32)
 
   // ---- CR-007 envelope v1 exact lengths (PAR-PROTO-DSN-CR-007 §7) -----------
   static final int EPH_PUBKEY_BYTES = 65;
@@ -125,8 +130,11 @@ public class KeyprovContractCheck {
         "WRAPPING_SUITE_ECDH_ES_P256_HKDF_SHA256_AES256GCM"});
     expectedEnums.put("KeyEnvelopeFormat", new String[] {
         "KEY_ENVELOPE_FORMAT_UNSPECIFIED", "KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1"});
+    expectedEnums.put("ImportProofAlgorithm", new String[] {
+        "IMPORT_PROOF_ALGORITHM_UNSPECIFIED",
+        "IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363"});
 
-    check("file declares 6 enums", file.getEnumTypeCount() == expectedEnums.size());
+    check("file declares 7 enums", file.getEnumTypeCount() == expectedEnums.size());
     Set<String> seenEnums = new HashSet<>();
     for (DescriptorProtos.EnumDescriptorProto e : file.getEnumTypeList()) {
       String[] expected = expectedEnums.get(e.getName());
@@ -180,7 +188,9 @@ public class KeyprovContractCheck {
         u64(3, "business_key_version"), en(4, "result", ".security.keyprov.v1.KeyImportResult"),
         bytes(5, "import_proof"), s(6, "proof_algorithm"),
         bytes(7, "envelope_digest"), bytes(8, "key_check_value"),
-        en(9, "envelope_format", ".security.keyprov.v1.KeyEnvelopeFormat")));
+        en(9, "envelope_format", ".security.keyprov.v1.KeyEnvelopeFormat"),
+        en(10, "import_proof_algorithm", ".security.keyprov.v1.ImportProofAlgorithm"),
+        bytes(11, "recipient_certificate_digest")));
     expectedMessages.put("KeyProvisioningAck", Arrays.asList(
         s(1, "request_id"), repMsg(2, "items", ".security.keyprov.v1.KeyImportItemResult"),
         i64(3, "timestamp_ms")));
@@ -245,7 +255,7 @@ public class KeyprovContractCheck {
       }
       check("message " + entry.getKey() + " fields 1.." + expected.size(), ok);
     }
-    check("enum-typed fields present (purpose/result/status/suite/format)", enumRefs == 15);
+    check("enum-typed fields present (purpose/result/status/suite/format/import-algorithm)", enumRefs == 16);
 
     // ---- Generated Java class resolution ------------------------------------
     Descriptors.FileDescriptor fd = Descriptors.FileDescriptor.buildFrom(file,
@@ -498,6 +508,78 @@ public class KeyprovContractCheck {
     expectViolation(() -> KeyprovCanonicalV1.validateAckBinding(v1Response,
         v1Ack.toBuilder().removeItems(1).build()), "ACK with missing purpose item rejected");
 
+    // ---- CR-008 §3/§4/§5 import attestation gates ---------------------------
+    check("ImportProofAlgorithm 0 reserved / 1 ECDSA_P256_SHA256_P1363",
+        ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_UNSPECIFIED.getNumber() == 0
+            && ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363.getNumber() == 1);
+    check("unknown ImportProofAlgorithm fail-closed (forNumber(999) == null)",
+        ImportProofAlgorithm.forNumber(999) == null);
+    DescriptorProtos.FieldDescriptorProto proofAlgoField =
+        fieldOf(file, "KeyImportItemResult", "proof_algorithm");
+    check("KeyImportItemResult.proof_algorithm (6) is deprecated",
+        proofAlgoField != null && proofAlgoField.getOptions().getDeprecated());
+
+    byte[] certDigest = new byte[DIGEST_BYTES];
+    Arrays.fill(certDigest, (byte) 0x61);
+    KeyImportItemResult cr008Import = KeyImportItemResult.newBuilder()
+        .setPurpose(KeyPurpose.KEY_PURPOSE_UPLINK_AEAD).setKeyId("biz-key-up-0002")
+        .setBusinessKeyVersion(3L).setResult(KeyImportResult.KEY_IMPORT_RESULT_IMPORTED)
+        .setImportProof(ByteString.copyFrom(validP1363LowS()))
+        .setEnvelopeDigest(ByteString.copyFrom(digest))
+        .setKeyCheckValue(ByteString.copyFrom(kcv))
+        .setEnvelopeFormat(KeyEnvelopeFormat.KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1)
+        .setImportProofAlgorithm(ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363)
+        .setRecipientCertificateDigest(ByteString.copyFrom(certDigest))
+        .build();
+    expectLegal(() -> KeyprovCanonicalV1.validateCr008SuccessItem(cr008Import, certDigest),
+        "CR-008 success item with P1363 low-S + 32B cert digest accepted");
+    expectViolation(() -> KeyprovCanonicalV1.validateCr008SuccessItem(
+        cr008Import.toBuilder().setImportProofAlgorithm(
+            ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_UNSPECIFIED).build(), certDigest),
+        "UNSPECIFIED import_proof_algorithm rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateCr008SuccessItem(
+        cr008Import.toBuilder().setProofAlgorithm("HMAC-SHA256").build(), certDigest),
+        "legacy proof_algorithm non-empty on success item rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateCr008SuccessItem(
+        cr008Import.toBuilder()
+            .setImportProof(ByteString.copyFrom(new byte[P1363_SIGNATURE_BYTES - 1])).build(),
+        certDigest), "non-64B import_proof rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateCr008SuccessItem(
+        cr008Import.toBuilder().setRecipientCertificateDigest(
+            ByteString.copyFrom(new byte[DIGEST_BYTES - 1])).build(), certDigest),
+        "non-32B recipient_certificate_digest rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateCr008SuccessItem(
+        cr008Import, new byte[DIGEST_BYTES]), "certificate digest mismatch rejected");
+    check("CR-008 attested item is capability-ready",
+        KeyprovCanonicalV1.isCr008Attested(cr008Import));
+    check("legacy proof_algorithm string alone cannot be CR-008 attested",
+        !KeyprovCanonicalV1.isCr008Attested(cr008Import.toBuilder()
+            .setImportProofAlgorithm(ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_UNSPECIFIED)
+            .setProofAlgorithm("HMAC-SHA256").build()));
+    check("CR-008 capability gate is a conjunction",
+        !KeyprovCanonicalV1.importAttestationCapabilityReady(true, true, false, true, true)
+            && KeyprovCanonicalV1.importAttestationCapabilityReady(true, true, true, true, true));
+
+    expectViolation(() -> KeyprovCanonicalV1.validateBusinessDomain("v2c_comm"),
+        "legacy lowercase businessDomain rejected by CR-008 canonical gate");
+    expectLegal(() -> KeyprovCanonicalV1.validateBusinessDomain("V2C_COMM"),
+        "V2C_COMM businessDomain accepted");
+    expectViolation(() -> KeyprovCanonicalV1.validatePurpose(KeyPurpose.KEY_PURPOSE_UNSPECIFIED),
+        "UNSPECIFIED purpose rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateBusinessKeyVersion(0L),
+        "businessKeyVersion 0 rejected");
+    expectViolation(() -> KeyprovCanonicalV1.validateBusinessKeyVersion(1L << 63),
+        "businessKeyVersion 2^63 rejected");
+    expectLegal(() -> KeyprovCanonicalV1.validateBusinessKeyVersion((1L << 63) - 1),
+        "businessKeyVersion 2^63-1 accepted");
+
+    byte[] cr008ProofInput = KeyprovCanonicalV1.proofInputV1("req-kp-0002", "V2C_COMM", cr008Import);
+    check("proofInputV1 matches legacy proofInput for identical inputs",
+        Arrays.equals(cr008ProofInput,
+            KeyprovCanonicalV1.proofInput("req-kp-0002", "V2C_COMM", cr008Import)));
+    expectViolation(() -> KeyprovCanonicalV1.proofInputV1("req-kp-0002", "v2c_comm", cr008Import),
+        "proofInputV1 rejects non-V2C_COMM businessDomain");
+
     // ---- §5 sensitivity classification static scan --------------------------
     check("wrapped_key/parameters/import_proof are bytes",
         typeOf(file, "WrappedKeyItem", "wrapped_key") == DescriptorProtos.FieldDescriptorProto.Type.TYPE_BYTES
@@ -589,9 +671,17 @@ public class KeyprovContractCheck {
       throw new Violation("import_proof > " + MAX_IMPORT_PROOF_BYTES);
     }
     boolean proofPresent = p.getImportProof().size() > 0;
-    boolean algoPresent = !p.getProofAlgorithm().isEmpty();
-    if (proofPresent != algoPresent) {
-      throw new Violation("import_proof and proof_algorithm must be paired");
+    boolean legacyAlgoPresent = !p.getProofAlgorithm().isEmpty();
+    boolean cr008AlgoPresent = p.getImportProofAlgorithm()
+        != ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_UNSPECIFIED;
+    if (proofPresent && !legacyAlgoPresent && !cr008AlgoPresent) {
+      throw new Violation("import_proof present without a proof algorithm");
+    }
+    if (legacyAlgoPresent && cr008AlgoPresent) {
+      throw new Violation("legacy proof_algorithm and import_proof_algorithm must not both be set");
+    }
+    if ((legacyAlgoPresent || cr008AlgoPresent) && !proofPresent) {
+      throw new Violation("proof algorithm present without import_proof");
     }
   }
 
@@ -669,16 +759,30 @@ public class KeyprovContractCheck {
 
   static DescriptorProtos.FieldDescriptorProto.Type typeOf(DescriptorProtos.FileDescriptorProto file,
       String message, String field) {
+    DescriptorProtos.FieldDescriptorProto f = fieldOf(file, message, field);
+    return f == null ? null : f.getType();
+  }
+
+  static DescriptorProtos.FieldDescriptorProto fieldOf(DescriptorProtos.FileDescriptorProto file,
+      String message, String field) {
     for (DescriptorProtos.DescriptorProto m : file.getMessageTypeList()) {
       if (m.getName().equals(message)) {
         for (DescriptorProtos.FieldDescriptorProto f : m.getFieldList()) {
           if (f.getName().equals(field)) {
-            return f.getType();
+            return f;
           }
         }
       }
     }
     return null;
+  }
+
+  /** CR-008 §5 positive control: r = 1, s = 1 (well inside the low-S range). */
+  static byte[] validP1363LowS() {
+    byte[] out = new byte[P1363_SIGNATURE_BYTES];
+    out[31] = 0x01;
+    out[63] = 0x01;
+    return out;
   }
 
   static void expectLegal(Runnable r, String label) {

@@ -9,17 +9,26 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 
 import net.hwyz.iov.security.keyprov.v1.EcdhEsP256EnvelopeParametersV1;
+import net.hwyz.iov.security.keyprov.v1.ImportProofAlgorithm;
 import net.hwyz.iov.security.keyprov.v1.KeyEnvelopeFormat;
 import net.hwyz.iov.security.keyprov.v1.KeyImportItemResult;
+import net.hwyz.iov.security.keyprov.v1.KeyImportResult;
 import net.hwyz.iov.security.keyprov.v1.KeyProvisioningAck;
 import net.hwyz.iov.security.keyprov.v1.KeyProvisioningResponse;
 import net.hwyz.iov.security.keyprov.v1.KeyProvisioningResult;
+import net.hwyz.iov.security.keyprov.v1.KeyPurpose;
 import net.hwyz.iov.security.keyprov.v1.WrappedKeyItem;
 import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
 
 /**
  * security.keyprov.v1 ECDH-ES v1 canonical reference implementation
  * (PAR-PROTO-DSN-CR-007 §4 / §5 / §6 / §7).
+ *
+ * <p>PAR-PROTO-DSN-CR-008 adds the versioned {@code proofInputV1} production
+ * canonical method, {@code V2C_COMM} businessDomain gate, frozen purpose 1/2
+ * mapping, businessKeyVersion range and the ECDSA P-256/SHA-256 IEEE-P1363
+ * low-S format/range contract. It still performs NO cryptographic verification:
+ * device signing is owned by TBOX-SEC and real ECDSA verification by FW-SEC.
  *
  * This class is the single Java authority for the cross-language (Java/C++)
  * byte-exact contract of the ECDH-ES v1 envelope. It deliberately contains NO
@@ -46,6 +55,10 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
  *       enumValue(purpose), SHA-256(UTF8(keyId)), uint64be(businessKeyVersion),
  *       envelopeDigest, keyCheckValue)
  *
+ *   proofInputV1 (CR-008 §4.1) has the same eight flat segments; it is the only
+ *   production method. The pre-CR-008 proofInput(...) is @Deprecated and only a
+ *   compatibility regression vector.
+ *
  *   aadDigest      = SHA-256(canonicalAad)
  *   keyCheckValue  = first_3_bytes(SHA-256(businessKey))
  *
@@ -70,11 +83,22 @@ public final class KeyprovCanonicalV1 {
   public static final String KEY_ALGORITHM_V1 = "AES-256";
   public static final String HKDF_CONTEXT_VERSION_V1 = "v1";
 
+  // ---- CR-008 import attestation constants (PAR-PROTO-DSN-CR-008 §3/§4/§5) --
+  /** design §4.2/RD-008-5: the only accepted businessDomain value in v1. */
+  public static final String BUSINESS_DOMAIN_V1 = "V2C_COMM";
+  public static final long MIN_BUSINESS_KEY_VERSION = 1L;
+  public static final long MAX_BUSINESS_KEY_VERSION = (1L << 63) - 1;
+  /** ECDSA P-256 P1363: r(32) || s(32). */
+  public static final int P1363_SIGNATURE_BYTES = 64;
+
   private static final BigInteger P256_P = new BigInteger(
       "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", 16);
   private static final BigInteger P256_A = P256_P.subtract(BigInteger.valueOf(3));
   private static final BigInteger P256_B = new BigInteger(
       "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", 16);
+  private static final BigInteger P256_ORDER_N = new BigInteger(
+      "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", 16);
+  private static final BigInteger P256_HALF_ORDER_N = P256_ORDER_N.shiftRight(1);
 
   private KeyprovCanonicalV1() {}
 
@@ -188,17 +212,49 @@ public final class KeyprovCanonicalV1 {
         item.getParameters().toByteArray()));
   }
 
-  /** design §5 canonical proof input for an ACK item. */
+  /**
+   * CR-008 §4.3 legacy canonical proof input. Kept ONLY as a compatibility
+   * regression vector: it MUST NOT be used for production signing/verification,
+   * readiness, capability or new golden vectors, and performs no CR-008 value
+   * gate (e.g. it still accepts the legacy lowercase businessDomain).
+   *
+   * @deprecated use {@link #proofInputV1(String, String, KeyImportItemResult)}.
+   */
+  @Deprecated
   public static byte[] proofInput(String requestId, String businessDomain, KeyImportItemResult item) {
+    return proofInputCore(requestId, businessDomain, item);
+  }
+
+  /**
+   * CR-008 §4.1/§4.2 the single production canonical method: eight flat
+   * length-prefixed segments. Fails closed on a non-{@code V2C_COMM}
+   * businessDomain, UNSPECIFIED purpose, out-of-range version or malformed
+   * digest/KCV.
+   */
+  public static byte[] proofInputV1(String requestId, String businessDomain, KeyImportItemResult item) {
+    validateBusinessDomain(businessDomain);
+    validatePurpose(item.getPurpose());
+    validateBusinessKeyVersion(item.getBusinessKeyVersion());
+    exactLength("envelope_digest", item.getEnvelopeDigest(), DIGEST_BYTES);
+    exactLength("key_check_value", item.getKeyCheckValue(), KCV_BYTES);
+    return proofInputCore(requestId, businessDomain, item);
+  }
+
+  private static byte[] proofInputCore(String requestId, String businessDomain, KeyImportItemResult item) {
     return lengthPrefixed(
         utf8(PROOF_DOMAIN),
         utf8(requestId),
         utf8(businessDomain),
         unsignedVarint(item.getPurposeValue()),
-        sha256(utf8(item.getKeyId())),
+        keyIdDigest(item.getKeyId()),
         uint64be(item.getBusinessKeyVersion()),
         item.getEnvelopeDigest().toByteArray(),
         item.getKeyCheckValue().toByteArray());
+  }
+
+  /** CR-008 §4.2: keyId enters the canonical input as SHA-256(UTF-8(keyId)). */
+  public static byte[] keyIdDigest(String keyId) {
+    return sha256(utf8(keyId));
   }
 
   // ---- v1 verification / fail-closed gates ---------------------------------
@@ -323,6 +379,106 @@ public final class KeyprovCanonicalV1 {
       exactLength("ack.envelope_digest", a.getEnvelopeDigest(), DIGEST_BYTES);
       exactLength("ack.key_check_value", a.getKeyCheckValue(), KCV_BYTES);
     }
+  }
+
+  // ---- CR-008 import attestation gates (§3.1/§4.2/§5/§9/§10) ---------------
+
+  /** CR-008 §4.2: businessDomain must be exactly V2C_COMM (no trim/fold/alias/fallback). */
+  public static void validateBusinessDomain(String businessDomain) {
+    if (!BUSINESS_DOMAIN_V1.equals(businessDomain)) {
+      throw new InvalidKeyprovInput("businessDomain must be exactly " + BUSINESS_DOMAIN_V1
+          + " (no trim/case-fold/alias/fallback)");
+    }
+  }
+
+  /** CR-008 §4.2 / RD-008-6: only the frozen numeric purposes 1/2 are accepted; 0 is reserved. */
+  public static void validatePurpose(KeyPurpose purpose) {
+    if (purpose != KeyPurpose.KEY_PURPOSE_UPLINK_AEAD
+        && purpose != KeyPurpose.KEY_PURPOSE_DOWNLINK_AEAD) {
+      throw new InvalidKeyprovInput("purpose must be UPLINK_AEAD(1) or DOWNLINK_AEAD(2)");
+    }
+  }
+
+  /** CR-008 §4.2: businessKeyVersion valid range is 1..2^63-1, encoded uint64be. */
+  public static void validateBusinessKeyVersion(long version) {
+    if (version < MIN_BUSINESS_KEY_VERSION || version > MAX_BUSINESS_KEY_VERSION) {
+      throw new InvalidKeyprovInput("business_key_version out of range [1, 2^63-1]: " + version);
+    }
+  }
+
+  /**
+   * CR-008 §5: ECDSA P-256/SHA-256 IEEE-P1363 r(32)||s(32), low-S.
+   *
+   * <p>Deterministic fail-closed on wrong length (rejects 63/65 byte and DER
+   * encodings), r/s = 0, r/s &gt;= n and s &gt; n/2 (high-S). This performs NO
+   * cryptographic verification: the real ECDSA P-256 verify is owned by FW-SEC
+   * and device signing by TBOX-SEC (design §5/§7).
+   */
+  public static void validateP1363LowS(byte[] proof) {
+    if (proof == null || proof.length != P1363_SIGNATURE_BYTES) {
+      throw new InvalidKeyprovInput("import_proof must be exactly " + P1363_SIGNATURE_BYTES
+          + " bytes (P1363 r||s); DER/other encodings are not accepted");
+    }
+    BigInteger r = new BigInteger(1, Arrays.copyOfRange(proof, 0, 32));
+    BigInteger s = new BigInteger(1, Arrays.copyOfRange(proof, 32, 64));
+    if (r.signum() == 0 || r.compareTo(P256_ORDER_N) >= 0) {
+      throw new InvalidKeyprovInput("import_proof r out of range [1, n-1]");
+    }
+    if (s.signum() == 0 || s.compareTo(P256_HALF_ORDER_N) > 0) {
+      throw new InvalidKeyprovInput("import_proof s out of range [1, n/2] (low-S required)");
+    }
+  }
+
+  /**
+   * CR-008 §3.1 success-item contract for a per-purpose ECDSA P-256 import
+   * attestation. Only IMPORTED items are constrained; failure/unknown items are
+   * governed by the result status matrix. The legacy proof_algorithm string must
+   * stay empty so it cannot form a second source of truth.
+   */
+  public static void validateCr008SuccessItem(KeyImportItemResult item, byte[] expectedCertificateDigest) {
+    if (item.getResult() != KeyImportResult.KEY_IMPORT_RESULT_IMPORTED) {
+      return;
+    }
+    if (item.getImportProofAlgorithm()
+        != ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363) {
+      throw new InvalidKeyprovInput("success import_proof_algorithm must be ECDSA_P256_SHA256_P1363");
+    }
+    if (!item.getProofAlgorithm().isEmpty()) {
+      throw new InvalidKeyprovInput("legacy proof_algorithm must be empty for CR-008 producers");
+    }
+    validateP1363LowS(item.getImportProof().toByteArray());
+    exactLength("recipient_certificate_digest", item.getRecipientCertificateDigest(), DIGEST_BYTES);
+    if (expectedCertificateDigest != null
+        && !constantTimeEquals(item.getRecipientCertificateDigest().toByteArray(),
+            expectedCertificateDigest)) {
+      throw new InvalidKeyprovInput(
+          "recipient_certificate_digest does not match the provisioning-bound certificate digest");
+    }
+  }
+
+  /**
+   * CR-008 §9 item 8 / §10: readiness derived ONLY from the governed CR-008
+   * fields. A stable legacy proofInput(...) or a legacy proof_algorithm string
+   * can never make this true.
+   */
+  public static boolean isCr008Attested(KeyImportItemResult item) {
+    return item.getImportProofAlgorithm()
+            == ImportProofAlgorithm.IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363
+        && item.getProofAlgorithm().isEmpty()
+        && item.getImportProof().size() == P1363_SIGNATURE_BYTES
+        && item.getRecipientCertificateDigest().size() == DIGEST_BYTES;
+  }
+
+  /**
+   * CR-008 §10 capability is a conjunction of independent, externally verified
+   * conditions. PAR-PROTO only encodes the gate; it never infers readiness from
+   * wire parseability or a legacy proof method.
+   */
+  public static boolean importAttestationCapabilityReady(boolean parProtoCr008Effective,
+      boolean tboxSecSignReady, boolean fwSecVerifyReady, boolean vmdAdapterReady,
+      boolean vectorsPass) {
+    return parProtoCr008Effective && tboxSecSignReady && fwSecVerifyReady && vmdAdapterReady
+        && vectorsPass;
   }
 
   // ---- helpers --------------------------------------------------------------

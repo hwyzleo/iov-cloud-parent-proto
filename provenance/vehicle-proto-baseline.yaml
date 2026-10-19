@@ -180,9 +180,9 @@ security_artifact:
     packages: [security.keyprov.v1]
     depends_on: [proto-vehicle-common]
     proto_file: security/keyprov/v1/key_provisioning.proto
-    proto_sha256: ea4ddae8e74d11126bb35b3948a4abcc71bbe849b7949bfd2f341bbfc2bb6d19
+    proto_sha256: 5e737477ddc1cae57a8ac2350870c7614f2b2f378e17a51db15a03321cd944dd
     descriptor_set: descriptors/security-keyprov-v1.pb
-    descriptor_sha256: 6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f
+    descriptor_sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230
     source_bundle: security-keyprov-v1-sources.tar.gz
     service: security.keyprov
     protocol_version: keyprov-v1
@@ -291,6 +291,59 @@ cr007_extension:
       envelope_keyprov_ecdh_v1_response.bin:     { sha256: 2c8c8d21ae8a57b128874cc532a3859668d38aca88073d1ba76b9a0843fa49ff, bytes: 1130 }
       envelope_keyprov_ecdh_v1_ack.bin:          { sha256: 1ce807b00877bccada345578b21120021fbb35c5ae8185c72eb62a44a02bd3b6, bytes: 425 }
 
+# ---- PAR-PROTO-DSN-CR-008 additive extension (per-purpose import attestation) -
+# CR-008 appends to security.keyprov.v1 by FIELD/ENUM ADD ONLY:
+#   + enum ImportProofAlgorithm
+#   + KeyImportItemResult.import_proof_algorithm = 10
+#   + KeyImportItemResult.recipient_certificate_digest = 11
+#   + KeyImportItemResult.proof_algorithm = 6 deprecated (string wire type kept)
+# Field numbers 1..9, message names, package and protocol_version=keyprov-v1 are
+# UNCHANGED. The CR-006/CR-007 golden hashes above stay authoritative: the old
+# payload bytes are byte-identical (additive wire compatibility, verified by
+# verify/KeyprovCr008IntegrationCheck.java).
+#
+# Scope boundary: PAR-PROTO owns the IDL, the proofInputV1 canonical bytes, field
+# binding and the P1363 length / r,s-range / low-S contract. Device signing is
+# owned by TBOX-SEC and the real ECDSA P-256/SHA-256 verification by FW-SEC;
+# PAR-PROTO neither signs nor verifies and ships no cryptographic reference
+# implementation. The import_proof bytes in the golden files are a deterministic
+# P1363 low-S *placeholder* (r=1, s=1) pinning the wire/canonical contract only.
+cr008_extension:
+  protocol_version: keyprov-v1
+  additive_wire_compatible: true
+  breaking_baseline: previous-release-empty  # buf breaking runs in CI vs prior release tag
+  business_domain: V2C_COMM                   # case-sensitive strict; legacy v2c_comm is regression-only
+  import_proof_algorithms: [IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363]
+  proof_signature: ECDSA_P256_SHA256_P1363_LOW_S
+  proof_input: proofInputV1                   # eight flat uint32be-length-prefixed segments
+  keyprov_descriptor_sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230
+  canonical_reference_impl: verify/KeyprovCanonicalV1.java
+  contract_check: verify/KeyprovContractCheck.java
+  integration_check: verify/KeyprovCr008IntegrationCheck.java
+  capability_conditions:
+    par_proto_cr008_release: true
+    tbox_sec_sign: TBOX-SEC-CR-020
+    fw_sec_verify: FW-SEC-CR-016-IMPORT_PROOF_VERIFY_ECDSA_P256_V1
+    vmd_atomic_activation: VMD-CR-062
+    java_cpp_golden_negative_vectors: true
+  golden_reference:
+    producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
+    location: verify/golden/expected/
+    files:
+      keyprov_cr008_proof_input_up.bin:        { sha256: f998b4800f01850a8768d90164912657293ee59cefc45f1f9ea6fb1312c17110, bytes: 149 }
+      keyprov_cr008_proof_input_down.bin:      { sha256: 2a7685c06d37cac2498d8318bfbc7d1d96dd59b74f115638d104263d304787d3, bytes: 149 }
+      keyprov_cr008_key_id_digest.bin:         { sha256: b6d40a078b63645aa6b23ec4f226dc376e00dd1180f1e09647ef4c614bae176b, bytes: 32 }
+      keyprov_cr008_proof_input_v1.bin:        { sha256: 65d51b8737721b808145d947721021ef183a03e2edb1b30118987d44df8d3da7, bytes: 149 }
+      keyprov_cr008_proof_input_v127.bin:      { sha256: 8fc282b9e6e5add4056f5247dd31115695dfc1c01033debea7ddcfa196465ff2, bytes: 149 }
+      keyprov_cr008_proof_input_v128.bin:      { sha256: 9e74f32b90ac737784560c822b2bd54a1baa6921fb34eac85e4c04d772f64cfb, bytes: 149 }
+      keyprov_cr008_proof_input_v255.bin:      { sha256: 6046e2822a17592bb12545ce29bbb881be6911efbfb3f1b4122ba3f3d7cae91e, bytes: 149 }
+      keyprov_cr008_proof_input_v256.bin:      { sha256: 6f574516894a039c921fcc263bb372c89bbdad0360da185dd7aa3dba97f120ad, bytes: 149 }
+      keyprov_cr008_proof_input_v2e32.bin:     { sha256: f53e32b6822c6d70595bbdbb3f2d5258fb7c209b9503be0d449ed53ef3f5ed49, bytes: 149 }
+      keyprov_cr008_proof_input_v2e63m1.bin:   { sha256: afe68ac3432b20c78abda7056db6d8acec680db470b5b04f25bc66b604477a9a, bytes: 149 }
+      keyprov_cr008_ack.bin:                   { sha256: c67957e7f9fa588dad6f1e60737185b5af92a874cd66bbd09d4ff5fc24cbd383, bytes: 360 }
+      keyprov_cr008_unknown_algorithm.bin:     { sha256: 12acf1aa5c0bd4318d4d57fb299186cd878eecf7739ecee575074074dc35dc4b, bytes: 167 }
+      envelope_keyprov_cr008_ack.bin:          { sha256: c2463ffbf5ecf94466d302bea9ca6b6d6b7a6b0c893364675aca97ca3a2337a6, bytes: 539 }
+
 # ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
 release_manifest:
   inventory_canonicalization_versions: [1, 2]
@@ -306,10 +359,13 @@ release_manifest:
     depends_on: [proto-vehicle-common]
     descriptor: descriptors/security-keyprov-v1.pb
     source_bundle: security-keyprov-v1-sources.tar.gz
-    sha256: 6a750aba6dbec3e0ca6c67a32e06d4127451b49e2e70b5186e285cdf22bff01f
+    sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230
     # CR-007: envelope v1 capability requires supported_envelope_formats +
     # DescriptorSet hash + PAR-PROTO release + FW-SEC Provider readiness.
     envelope_formats: [KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1]
+    # CR-008: per-purpose import attestation capability is a conjunction; the
+    # only governed algorithm is ECDSA P-256/SHA-256/P1363 low-S.
+    import_proof_algorithms: [IMPORT_PROOF_ALGORITHM_ECDSA_P256_SHA256_P1363]
     canonical_reference_impl: verify/KeyprovCanonicalV1.java
   # NOTE: no cloud_events and no proto-ota artifact. The OTA->VMD observed event
   # is NOT Proto and NOT part of PAR-PROTO (design §7 / RD-005-8).
