@@ -92,6 +92,15 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 - 发布门禁（任一不一致则 V2C ECDH-ES 保持 DOWN）：PAR-PROTO CR-009 release → VEH-PROTO lock/source + DescriptorSet + vector hash → FW-SEC AAD profile capability → VMD mapper/wire digest → TBOX-SEC vector regression → relay byte-for-byte → E2E → enable capability。REQ-009-5 原位纠正 v1 需生产审计证明不存在任何旧口径 ACTIVE/成功 ACK/SEC COMMITTED/成功 proof/已交付成功消费者，否则必须新开 v2。
 - 验证：`verify/KeyprovCr009VectorProducer.java`（权威向量包 + fail-fast 自检）、`verify/KeyprovCr009VectorCheck.java`（bundle 完整性 + 边界向量 + 负面向量 + CR-007/008 golden 回归）。
 
+## CR-010: KEYPROV-LIFECYCLE-1（KL1）生命周期规范 profile（PAR-PROTO-DSN-CR-010，协议先行）
+
+- 裁决：新增 KEYPROV-LIFECYCLE-1 规范 profile，**不新增字段号、不改 package/service/keyprov-v1、不变密码学 profile**（descriptor 零变化）；只修正跨应用重放策略。KL1 支持由语义/profile manifest hash 证明，**不能以 descriptor 不变宣称已支持 KL1**。配套需求 PAR-PROTO-REQ-CR-010（KL-REQ-001～007），完整设计见 SPEC 设计 §8.6 与 CR-010 正文。
+- 生命周期 conformance 向量：固定 case-set `keyprov-lifecycle-kl1-v1`，**24 场景组 / 57 固定子例**，T0=1800000000000ms（绝不使用执行机器时间）。向量包 `verify/keyprov-lifecycle-kl1-v1/`（JSON、oracle.py、README、reference-report、SHA256SUMS）字节级冻结，`lifecycle-vectors.json` SHA256=5226b92733a93634d9bdd11ec7090b1ba655979e3beca0399784e9db7de855e3。input/expected 均为固定语义，input_hash/expected_hash = SHA256(规范 JSON 排序去空白)。先前 48 子例预检包不作为 release 输入。
+- 纯函数纪律：TTL 签发、状态/错误矩阵、时间比较全部抽成纯函数（`verify/KeyprovLifecycleDecide.java`，可注入 UTC/monotonic clock，无 sleep/真实时钟）；14 种 operation（issue/accept/ack/dedupe/budget/reconcile/stabilize/expired/transport/new_attempt/time/chain/sec_contract/store）对应 KL-REQ-001～007 的固定算法与默认值，Java 参考模型与 Python oracle.py 同语义自洽 57/57。
+- 双端 CI 语义对账：云端 PAR/VMD 保存规范 JSON 和 hash；VEH-PROTO 同步 case 内容与 hash（不发布代码/artifact）；TSP/SEC 在本仓固定同输入与期望并本地 manifest 比对。本仓 CI 输出 `{case_id, input_hash, expected_hash, actual_action, counters, pass}`（`verify/out/keyprov-lifecycle-ci-report.json`），release gate 对 case ID 集合、profile 参数、输入/期望 hash 与实际结果逐项比较；禁止测试现场跨仓浮动下载、禁止手工改 expected 掩盖差异。
+- 边界：本包参考 oracle（Python + Java）只验证规范内部自洽，**不代替生产实现 conformance**；实际 adapter 必须把同一输入映射到各端真实决策函数/调度/存储并输出实际副作用计数，不得调用参考 oracle 生成 actual。VMD/TSP/SEC 生产 adapter、mock/真实组件 E2E、真车验收与 DoD 签字（SPEC §8.6.7）待联合评审后由各仓执行。
+- 验证：`verify/KeyprovLifecycleVectorCheck.java`（SHA256SUMS + JSON hash 5226b927… + 57 唯一子例 + LC01～LC24 覆盖 + 逐例重算 input/expected hash + Java 参考模型 57/57 + CI 报告，篡改即 fail-closed）；`run_verify.sh` 步骤 21/22；`provenance/vehicle-proto-baseline.yaml` cr010_extension 区段。
+
 ## CR-007: keyprov ECDH-ES v1 信封（兼容增量）
 
 - 以 **纯追加** 方式扩展 `security.keyprov.v1`（PAR-PROTO-DSN-CR-007，字段号 1～9、消息名、package 与 `protocol_version=keyprov-v1` 全部不变）：新增枚举 `KeyEnvelopeFormat`、消息 `EcdhEsP256EnvelopeParametersV1`，并为 `KeyProvisioningRequest` 追加 `supported_envelope_formats=11`、`WrappedKeyItem` 追加 `envelope_digest=10`/`key_check_value=11`/`envelope_format=12`、`KeyImportItemResult` 追加 `envelope_digest=7`/`key_check_value=8`/`envelope_format=9`。

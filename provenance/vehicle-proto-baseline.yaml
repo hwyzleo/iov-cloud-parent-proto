@@ -419,6 +419,54 @@ cr009_extension:
     - relay_byte_for_byte
     - e2e Request/Response/Import/ACK/ACTIVE
 
+# ---- CR-010 KEYPROV-LIFECYCLE-1 (KL1) lifecycle profile (PAR-PROTO-DSN-CR-010) ---
+# Spec frozen (SPEC 设计 §8.6 / REQ KL-REQ-001..007): NO field numbers, package,
+# service or crypto profile change — descriptor stays identical. KL1 support is
+# proven by the semantic/profile manifest hash, never by an unchanged descriptor.
+# This section records the frozen lifecycle case-set + CI reconciliation schema.
+cr010_extension:
+  profile: KEYPROV-LIFECYCLE-1
+  case_set: keyprov-lifecycle-kl1-v1
+  fixed_T0_ms: 1800000000000   # normative; golden never uses execution-machine time
+  lifecycle_vector_json_sha256: 5226b92733a93634d9bdd11ec7090b1ba655979e3beca0399784e9db7de855e3
+  scope: semantic lifecycle golden only (no fabricated crypto vectors)
+  case_set_shape: [24 scenario groups, 57 fixed sub-cases]
+  prior_48_subcase_preflight: NOT_A_RELEASE_INPUT
+  parameters:
+    response_ttl_ms: 60000
+    batch_ms: 300000
+    ack_grace_ms: 30000
+    skew_ms: 2000
+    issue_min_ms: 20000
+    import_min_ms: 15000
+    request_limit: 8
+    request_window_ms: 120000
+    readonly_limit: 12
+    readonly_window_ms: 300000
+    ack_limit: 3
+    chain_ids: 3
+    chain_window_ms: 600000
+    sec_nf_observations: 3
+    sec_nf_span_ms: 12000
+  vector_bundle:
+    location: verify/keyprov-lifecycle-kl1-v1/
+    official_files: [lifecycle-vectors.json, oracle.py, README.md, reference-report.json, SHA256SUMS]
+    lifecycle_vectors_json_sha256: 5226b92733a93634d9bdd11ec7090b1ba655979e3beca0399784e9db7de855e3
+    oracle_py_sha256: 9e0b704065553695ab8e48336b135dcb2fd78ab9bcfb91b39a3770f7bac89c74
+    reference_report_sha256: 2934025532737f5d1aae540731813c8af9a4b357a44ff19d8d7e7cac6000b269
+    reference_status: [57 of 57 passed, REFERENCE_ORACLE_ONLY_NOT_PRODUCTION_CI]
+  java_reference_model: verify/KeyprovLifecycleDecide.java   # pure functions, injectable clock, no sleep
+  vector_check: verify/KeyprovLifecycleVectorCheck.java
+  ci_report_schema: "{case_id, input_hash, expected_hash, actual_action, counters, pass}"
+  ci_report_output: verify/out/keyprov-lifecycle-ci-report.json
+  hash_convention: "SHA-256 of Python json.dumps(compact, sort_keys, ensure_ascii=False)"
+  cross_repo_gate:
+    - cloud PAR/VMD saves spec JSON + hash
+    - VEH-PROTO syncs case content + hash (no code/artifact release)
+    - TSP/SEC pin same inputs + expected locally and compare local manifest
+    - release gate compares case-ID set, profile parameters, input/expected hashes, actual results
+  production_conformance: NOT_RUN  # VMD/TSP/SEC adapters, mock/real E2E, real vehicle all pending
+
 # ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
 release_manifest:
   inventory_canonicalization_versions: [1, 2]

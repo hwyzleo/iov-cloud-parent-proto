@@ -35,6 +35,11 @@
 #   20. CR-009 vector check (bundle integrity + boundary vectors + negatives +
 #        CR-007/008 golden regression)                   - CR-009 §2/§4, REQ-009 acc.
 #                                                        — CR-008 §3/§4/§5/§9
+#   21. CR-010 lifecycle bundle integrity (keyprov-lifecycle-kl1-v1: SHA256SUMS + 57
+#        sub-cases + JSON hash 5226b927... + LC01..LC24 groups)  - CR-010 §8.6.3/§8.6.5
+#   22. CR-010 Java reference model (pure decision functions 57/57 + CI report
+#        {case_id, input_hash, expected_hash, actual_action, counters, pass})
+#                                                        - CR-010 §8.6.4
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -46,7 +51,7 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/20] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/22] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
@@ -447,6 +452,51 @@ if [ -f "$PB_JAR" ]; then
     && grep -q "357499a0a409e2abe6d6ca3274dd33ae1ee8ac36326c0e9498057892268491ee" /tmp/cr009_bundle_checksums.txt \
     && pass "CR-009 vector bundle hashes match provenance manifest" \
     || fail "CR-009 vector bundle hashes differ from provenance manifest"
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 21. CR-010 lifecycle bundle integrity (shell-only, no PB_JAR) -------
+step 21 "CR-010 lifecycle bundle integrity (keyprov-lifecycle-kl1-v1)"
+KL1_BUNDLE=verify/keyprov-lifecycle-kl1-v1
+if [ -d "$KL1_BUNDLE" ] && [ -f "$KL1_BUNDLE/SHA256SUMS" ]; then
+  ( cd "$KL1_BUNDLE" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1 ) \
+    && pass "keyprov-lifecycle-kl1-v1 SHA256SUMS self-consistent (bundle frozen byte-identical)" \
+    || fail "keyprov-lifecycle-kl1-v1 SHA256SUMS mismatch (bundle must stay byte-identical)"
+  if [ "$(shasum -a 256 "$KL1_BUNDLE/lifecycle-vectors.json" | cut -d' ' -f1)" = \
+       "5226b92733a93634d9bdd11ec7090b1ba655979e3beca0399784e9db7de855e3" ]; then
+    pass "lifecycle-vectors.json sha256 == 5226b927... (CR-010 frozen JSON)"
+  else
+    fail "lifecycle-vectors.json sha256 differs from 5226b927... (frozen JSON mutated)"
+  fi
+  if grep -q '"passed": 57' "$KL1_BUNDLE/reference-report.json" \
+     && grep -q '"total": 57' "$KL1_BUNDLE/reference-report.json" \
+     && grep -q 'REFERENCE_ORACLE_ONLY_NOT_PRODUCTION_CI' "$KL1_BUNDLE/reference-report.json"; then
+    pass "reference-report.json is 57/57 REFERENCE_ORACLE_ONLY (not production CI)"
+  else
+    fail "reference-report.json inconsistent or mis-scoped"
+  fi
+else
+  fail "CR-010 lifecycle bundle missing ($KL1_BUNDLE)"
+fi
+
+# ---- 22. CR-010 Java reference model + CI reconciliation report ------------
+step 22 "CR-010 lifecycle Java reference model (57/57 + CI report)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR" -d verify/out \
+    verify/KeyprovLifecycleJson.java verify/KeyprovLifecycleDecide.java verify/KeyprovLifecycleVectorCheck.java
+  if java -cp "$PB_JAR:verify/out" KeyprovLifecycleVectorCheck; then
+    pass "CR-010 Java reference model 57/57 + bundle/params/hash/CI report verified"
+    if [ -s verify/out/keyprov-lifecycle-ci-report.json ]; then
+      pass "CI reconciliation report written (verify/out/keyprov-lifecycle-ci-report.json)"
+      shasum -a 256 verify/out/keyprov-lifecycle-ci-report.json
+    else
+      fail "CI reconciliation report missing/empty"
+    fi
+  else
+    fail "CR-010 lifecycle vector check failed (reference model diverged or bundle tampered)"
+  fi
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi
