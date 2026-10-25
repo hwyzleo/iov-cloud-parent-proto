@@ -12,6 +12,8 @@ option java_outer_classname = "VehicleKeyProvisioningProto";
 //   (PAR-PROTO-REQ-CR-007 / PAR-PROTO-DSN-CR-007 — ECDH-ES v1 兼容增量)
 //   (PAR-PROTO-REQ-CR-008 / PAR-PROTO-DSN-CR-008 — 每用途 ECDSA P-256/P1363
 //    Import Attestation 兼容增量)
+//   (PAR-PROTO-REQ-CR-009 / PAR-PROTO-DSN-CR-009 — V2C wire canonical 收口：
+//    9 字段 wireEnvelopeDigest + PAR-PROTO canonical AAD registry + 跨端唯一向量)
 // =============================================================================
 // SSOT：本文件是 TBOX 首次注册激活 V2C 业务密钥开通的唯一车云 wire 权威来源。
 // TBOX-TSP、TBOX-MQTT、VAGW、VMD 及 VEH-PROTO 只能锁版消费本文件发布的
@@ -72,17 +74,50 @@ option java_outer_classname = "VehicleKeyProvisioningProto";
 // 任一项不合法（含非法 P-256 点、未知 format_version、suite/format 不匹配）整体拒绝，
 // 不截断、不补默认值，不得降级为未定义 parameters。
 //
-// ---- CR-007 canonical 编码与摘要（PAR-PROTO-DSN-CR-007 §4）-----------------
+// ---- CR-007 canonical 编码（PAR-PROTO-DSN-CR-007 §4）----------------------
 //   parameters = deterministicSerialize(EcdhEsP256EnvelopeParametersV1)
-//   envelopeDigest = SHA-256(lengthPrefixed(
-//       envelopeFormat, requestId, businessDomain, purpose, keyId,
-//       businessKeyVersion, wrappingSuite, wrappedKey, parameters))
-//   长度前缀固定 unsigned 32-bit big-endian；字符串先 UTF-8；枚举取无符号 varint
-//   规范整数值；bytes 使用原始内容。envelope_digest 字段本身不进入摘要。
-//   注：设计 §4.2 未规定 businessKeyVersion(uint64) 的取值编码；本仓与 §5 proofInput
-//   对同一字段的口径保持一致，固定为 uint64be（8 字节大端），已在 golden vector 固化。
-//   canonical_aad 由 FW-SEC EnvelopeAadV1 冻结，PAR-PROTO 只承载 canonical bytes
-//   与 SHA-256 digest；TBOX-SEC 必须从 outer context 重建 AAD 并比较，禁止盲信重复字段。
+//   （CR-009 取代本段 wire 摘要/AAD 权威描述，wire canonical 见下方 CR-009 registry 块）
+//
+// ---- CR-009 V2C wire canonical registry（PAR-PROTO-DSN-CR-009 §2）---------
+// WIRE_PROFILE = PAR_PROTO_KEYPROV_ECDH_ES_P256_V1
+// wireDigestInput = segment(envelopeFormat)
+//                 || segment(UTF8(requestId))
+//                 || segment(UTF8(businessDomain))
+//                 || segment(unsignedVarint(purpose))
+//                 || segment(UTF8(keyId))
+//                 || segment(uint64be(businessKeyVersion))
+//                 || segment(unsignedVarint(wrappingSuite))
+//                 || segment(wrappedKey)
+//                 || segment(originalDeterministicParametersBytes)
+// wireEnvelopeDigest = SHA-256(wireDigestInput)
+// segment(x) = uint32be(len(x)) || x；共且仅有 9 个顶层 segment。
+// 禁止 enum name()/ordinal()、十进制 version、JSON、Base64/hex 文本或 parse 后
+// 重编码 parameters；wrappedKey/parameters 使用原始 bytes。envelope_digest 字段
+// 本身不进入摘要。businessKeyVersion 固定 uint64be（8 字节大端），已在权威向量固化。
+// WrappedKeyItem.envelope_digest 与 KeyImportItemResult.envelope_digest 只承载
+// wireEnvelopeDigest。FW-SEC 18 字段摘要为内部 coreEnvelopeDigest，不得写入
+// envelope_digest；VEH-PROTO/TBOX-SEC 不得依赖 FW-SEC 私有 canonical。
+//
+// AAD_PROFILE = PAR_PROTO_KEYPROV_AAD_V1（10 段，字段顺序固定）:
+//   canonicalAad = segment(envelopeFormat)             // unsigned varint
+//               || segment(wrappingSuite)              // unsigned varint
+//               || segment(purpose)                    // unsigned varint
+//               || segment(uint64be(businessKeyVersion))
+//               || segment(uint64be(rootKeyVersion))
+//               || segment(recipientCertificateDigest) // 原始 32 bytes，非 hex/文本
+//               || segment(UTF8(requestId))
+//               || segment(UTF8(businessDomain))
+//               || segment(UTF8(keyId))
+//               || segment(UTF8(derivationVersion))
+// aadDigest = SHA-256(canonicalAad)。云端 AES-GCM 加密实际使用 AAD 必须与
+// canonical_aad 逐字节相同，禁止加密完成后由 Adapter 替换；TBOX-SEC 从 outer
+// context 重建 AAD 并与承载值和 aad_digest 常量时间比较。Java/C++ helper 必须
+// 来自同一向量规范 verify/keyprov-ecdh-es-p256-v1/（唯一跨端权威向量）。
+//
+// ---- CR-009 digest 命名纪律（PAR-PROTO-DSN-CR-009 §2.3）------------------
+// coreEnvelopeDigest 仅属 FW-SEC 内部结果完整性/存储校验；wireEnvelopeDigest 属
+// PAR-PROTO（Response、TBOX-SEC 校验、ACK、proofInput、VMD 激活）。Wire DTO、
+// 数据库列与日志字段不得使用无前缀的模糊 digest 名称表达二者。
 //
 // ---- CR-007 能力协商与降级（PAR-PROTO-DSN-CR-007 §6.1/§8）-----------------
 //   * Request.supported_wrapping_suites 必须包含 ECDH-ES suite；
@@ -271,8 +306,8 @@ message EcdhEsP256EnvelopeParametersV1 {
   string hkdf_context_version = 4;           // "v1"
   bytes nonce = 5;                           // AES-GCM nonce，恰好 12 bytes
   bytes authentication_tag = 6;              // 恰好 16 bytes
-  bytes canonical_aad = 7;                   // FW-SEC EnvelopeAadV1 canonical bytes，<= 1 KiB
-  bytes aad_digest = 8;                      // SHA-256(canonical_aad)，恰好 32 bytes
+  bytes canonical_aad = 7;                   // PAR_PROTO_KEYPROV_AAD_V1 canonical bytes（10 段 registry），<= 1 KiB
+  bytes aad_digest = 8;                      // aadDigest = SHA-256(canonical_aad)，恰好 32 bytes
   uint64 root_key_version = 9;
   string derivation_version = 10;
   bytes recipient_certificate_digest = 11;   // SHA-256 DER/SPKI policy digest，恰好 32 bytes
@@ -290,7 +325,9 @@ message WrappedKeyItem {
   int64 valid_from_ms = 7;                       // 0=未设置
   int64 valid_to_ms = 8;                         // 0=未设置；设置时 from < to
   bytes parameters = 9;                          // <= 2048 bytes，EcdhEsP256EnvelopeParametersV1 deterministic bytes
-  // CR-007 §3/§4.2/§7：canonical envelope 摘要，恰好 32 bytes。计算时排除本字段本身。
+  // CR-009 §2.1/§2.3：PAR_PROTO_KEYPROV_ECDH_ES_P256_V1 wireEnvelopeDigest，
+  // 恰好 32 bytes，9 字段 SHA-256(wireDigestInput)。
+  // It is NOT FW-SEC coreEnvelopeDigest。计算时排除本字段本身。
   bytes envelope_digest = 10;
   // CR-007 §3/§7：key check value，v1 = first_3_bytes(SHA-256(businessKey))，恰好 3 bytes。
   bytes key_check_value = 11;
@@ -330,7 +367,7 @@ message KeyImportItemResult {
   //     segment(SHA-256(UTF8(keyId))), segment(uint64be(businessKeyVersion)),
   //     segment(envelopeDigest), segment(keyCheckValue))
   //   segment(x) = uint32be(len(x)) || x，共且仅有八个顶层 segment。
-  bytes envelope_digest = 7;                     // 恰好 32 bytes
+  bytes envelope_digest = 7;                     // CR-009 §2.3：wireEnvelopeDigest，恰好 32 bytes（非 FW-SEC coreEnvelopeDigest）
   bytes key_check_value = 8;                     // 恰好 3 bytes
   KeyEnvelopeFormat envelope_format = 9;
   // CR-008 §3：受治理 import proof 算法，新生产流唯一算法事实源。

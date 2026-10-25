@@ -84,13 +84,21 @@ iov-cloud-parent-proto/                     # packaging=pom, aggregator + parent
 - 门禁：`buf lint/breaking`、`descriptors/security-keyprov-v1.pb` 确定性、`verify/KeyprovContractCheck.java`（字段号/枚举/generated 类/unknown-field-enum/§4.3 大小门禁/§4.4 完整性/§5 敏感性扫描）、`verify/KeyprovGoldenProducer.java`（六类 payload + Envelope golden bytes）。
 - 枚举值采用完整前缀（如 `KEY_PURPOSE_UPLINK_AEAD`、`KEY_PROVISIONING_STATUS_ACTIVE`），保持 `buf lint STANDARD` 合规。本 CR 不实现 MQTT Route/ACL、VAGW→VMD 路由、VMD/KMS 编排或 TBOX-SEC 解封装。
 
+## CR-009: keyprov V2C wire canonical 收口（PAR-PROTO-DSN-CR-009，纯注释修订）
+
+- 裁决：PAR-PROTO 重新收口 V2C Keyprov wire canonical。`WrappedKeyItem.envelope_digest` 与 `KeyImportItemResult.envelope_digest` 只承载 9 字段 `wireEnvelopeDigest`（`WIRE_PROFILE = PAR_PROTO_KEYPROV_ECDH_ES_P256_V1`）；FW-SEC 18 字段摘要更名为内部 `coreEnvelopeDigest`，不得写入 wire、ACK 或 Import Attestation。AAD 由版本化 `AAD_PROFILE = PAR_PROTO_KEYPROV_AAD_V1` 冻结（10 段），并必须在 AES-GCM 加密前生成使用。
+- 跨端只发布一套权威 wire 向量：`verify/keyprov-ecdh-es-p256-v1/`（10 正式文件 + `negative/`，manifest 记录 source/DescriptorSet/向量/工具链 SHA-256）。VMD Java、TBOX-SEC C++ 与 VEH-PROTO 生成物直接消费同一 bundle/hash；FW-SEC core 向量仅标为内部向量。
+- 字段号、消息结构、deterministic parameters、format 协商、大小门禁与 ACK 字段保持 CR-007 不变（comment-only，DescriptorSet hash 不变）；CR-006/007/008 golden 字节保持不变即为 wire 附加兼容证据。
+- 发布门禁（任一不一致则 V2C ECDH-ES 保持 DOWN）：PAR-PROTO CR-009 release → VEH-PROTO lock/source + DescriptorSet + vector hash → FW-SEC AAD profile capability → VMD mapper/wire digest → TBOX-SEC vector regression → relay byte-for-byte → E2E → enable capability。REQ-009-5 原位纠正 v1 需生产审计证明不存在任何旧口径 ACTIVE/成功 ACK/SEC COMMITTED/成功 proof/已交付成功消费者，否则必须新开 v2。
+- 验证：`verify/KeyprovCr009VectorProducer.java`（权威向量包 + fail-fast 自检）、`verify/KeyprovCr009VectorCheck.java`（bundle 完整性 + 边界向量 + 负面向量 + CR-007/008 golden 回归）。
+
 ## CR-007: keyprov ECDH-ES v1 信封（兼容增量）
 
 - 以 **纯追加** 方式扩展 `security.keyprov.v1`（PAR-PROTO-DSN-CR-007，字段号 1～9、消息名、package 与 `protocol_version=keyprov-v1` 全部不变）：新增枚举 `KeyEnvelopeFormat`、消息 `EcdhEsP256EnvelopeParametersV1`，并为 `KeyProvisioningRequest` 追加 `supported_envelope_formats=11`、`WrappedKeyItem` 追加 `envelope_digest=10`/`key_check_value=11`/`envelope_format=12`、`KeyImportItemResult` 追加 `envelope_digest=7`/`key_check_value=8`/`envelope_format=9`。
 - `parameters` 的 wire type 仍为有界 `bytes`，但内容正式冻结为 `EcdhEsP256EnvelopeParametersV1` 的 **deterministic protobuf 序列化**；算法套件（`WrappingSuite`）与 envelope 参数格式（`KeyEnvelopeFormat`）分离协商，禁止仅凭 suite 猜测 bytes。
 - Canonical 契约（`verify/KeyprovCanonicalV1.java` 为唯一 Java 参考实现）：
-  - `envelopeDigest = SHA-256(lengthPrefixed(envelopeFormat, requestId, businessDomain, purpose, keyId, businessKeyVersion, wrappingSuite, wrappedKey, parameters))`，段长为 unsigned 32-bit big-endian，字符串 UTF-8、枚举无符号 varint、`businessKeyVersion` 固定 8 字节大端（设计 §4.2 未规定，本仓对齐 §5 口径并在 golden 中固化）；
-  - `canonical_aad` 由 FW-SEC `EnvelopeAadV1` 冻结，PAR-PROTO 只承载 canonical bytes 与 `aad_digest = SHA-256(canonical_aad)`；
+  - `wireEnvelopeDigest = SHA-256(wireDigestInput)`（WIRE_PROFILE = `PAR_PROTO_KEYPROV_ECDH_ES_P256_V1`，PAR-PROTO-DSN-CR-009 §2.1）：9 个顶层 segment `envelopeFormat / requestId / businessDomain / purpose / keyId / businessKeyVersion(uint64be 8B) / wrappingSuite / wrappedKey / parameters`，段长为 unsigned 32-bit big-endian，字符串无 BOM UTF-8、枚举最短无符号 varint、禁止 name()/ordinal()/十进制/JSON/Base64/hex 文本或 parse 后重编码 parameters。`WrappedKeyItem.envelope_digest`/`KeyImportItemResult.envelope_digest` 只承载它；FW-SEC 18 字段摘要为内部 `coreEnvelopeDigest`，不得进入 wire/ACK/proofInput；
+  - `canonicalAad`（AAD_PROFILE = `PAR_PROTO_KEYPROV_AAD_V1`，CR-009 §2.2）：10 段固定顺序 `envelopeFormat / wrappingSuite / purpose / businessKeyVersion / rootKeyVersion / recipientCertificateDigest(原始32B) / requestId / businessDomain / keyId / derivationVersion`，`aad_digest = SHA-256(canonicalAad)`；云端 AES-GCM 实际 AAD 必须与 `canonical_aad` 逐字节相同，禁止加密后由 Adapter 替换；TBOX-SEC 从 outer context 重建并常量时间比较；
   - `keyCheckValue = first_3_bytes(SHA-256(businessKey))`；
   - `proofInput = lengthPrefixed("openiov|keyprov-ack|v1", requestId, businessDomain, purpose, SHA-256(UTF8(keyId)), uint64be(businessKeyVersion), envelopeDigest, keyCheckValue)`，具体 HMAC/CMAC/签名算法由 TBOX-SEC CR 与 FW-SEC test vector 冻结。
 - 门禁与降级：Request 未声明 `supported_envelope_formats` 或其仅含 `UNSPECIFIED`/未知值时，云端不得下发 envelope v1；Response 双用途 item 的 suite/format 组合、参数长度、P-256 点、AAD/envelope digest 全部校验通过后才可交给 TBOX-SEC；ACK 必须精确绑定本次 Response 的 format/digest/KCV。wire 兼容不等于 capability，须叠加 DescriptorSet hash、PAR-PROTO release 与 FW-SEC Provider readiness。

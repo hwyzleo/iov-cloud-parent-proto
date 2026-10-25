@@ -180,7 +180,7 @@ security_artifact:
     packages: [security.keyprov.v1]
     depends_on: [proto-vehicle-common]
     proto_file: security/keyprov/v1/key_provisioning.proto
-    proto_sha256: 5e737477ddc1cae57a8ac2350870c7614f2b2f378e17a51db15a03321cd944dd
+    proto_sha256: d2c073def5a51e9027aa8d2d1215ba266fad8fd314acb93e0fd8bef58ac70cea   # CR-009 comment-only (wire schema zero change)
     descriptor_set: descriptors/security-keyprov-v1.pb
     descriptor_sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230
     source_bundle: security-keyprov-v1-sources.tar.gz
@@ -344,6 +344,81 @@ cr008_extension:
       keyprov_cr008_unknown_algorithm.bin:     { sha256: 12acf1aa5c0bd4318d4d57fb299186cd878eecf7739ecee575074074dc35dc4b, bytes: 167 }
       envelope_keyprov_cr008_ack.bin:          { sha256: c2463ffbf5ecf94466d302bea9ca6b6d6b7a6b0c893364675aca97ca3a2337a6, bytes: 539 }
 
+# ---- PAR-PROTO-DSN-CR-009 (V2C wire canonical 收口, comment-only) ----------
+# CR-009 corrects the CR-007 wire-digest authority: PAR-PROTO is the wire SSOT.
+#   * WIRE_PROFILE = PAR_PROTO_KEYPROV_ECDH_ES_P256_V1
+#       wireEnvelopeDigest = SHA-256(wireDigestInput) over exactly 9 segments:
+#       envelopeFormat / requestId / businessDomain / purpose / keyId /
+#       businessKeyVersion(uint64be 8B) / wrappingSuite / wrappedKey / parameters.
+#       Carried in WrappedKeyItem.envelope_digest and
+#       KeyImportItemResult.envelope_digest.
+#   * AAD_PROFILE = PAR_PROTO_KEYPROV_AAD_V1 — exactly 10 segments, order frozen:
+#       envelopeFormat / wrappingSuite / purpose / businessKeyVersion /
+#       rootKeyVersion / recipientCertificateDigest(raw 32B) / requestId /
+#       businessDomain / keyId / derivationVersion; every segment uint32be
+#       length-prefixed; enums as shortest unsigned varint, versions as 8-byte
+#       uint64be, strings as no-BOM UTF-8. aadDigest = SHA-256(canonicalAad).
+#       The cloud AES-GCM AAD MUST equal canonical_aad byte-for-byte; TBOX-SEC
+#       rebuilds it from the OUTER context and compares constant-time.
+#   * FW-SEC's 18-field digest is renamed coreEnvelopeDigest (internal
+#     result-integrity fact) and MUST NOT enter the wire, ACK or proofInput.
+#     Wire DTOs / DB columns / log fields must use prefixed names
+#     (wireEnvelopeDigest / coreEnvelopeDigest), never an unprefixed ambiguous
+#     digest name.
+#   * Field numbers, message structure, deterministic parameters, format
+#     negotiation, size gates and ACK fields of CR-007 are PRESERVED.
+#     DescriptorSet sha256 UNCHANGED (descriptors are generated without
+#     SourceCodeInfo, so comment-only edits keep descriptor bytes identical).
+#   * Single cross-end authoritative vector bundle (REQ-009-4):
+#     verify/keyprov-ecdh-es-p256-v1/ consumed byte-exactly by VMD Java,
+#     TBOX-SEC C++ and VEH-PROTO generated C++. FW-SEC core vectors are
+#     internal-only and never wire expectations.
+cr009_extension:
+  protocol_version: keyprov-v1
+  comment_only_wire_change: true
+  wire_profile: PAR_PROTO_KEYPROV_ECDH_ES_P256_V1
+  aad_profile: PAR_PROTO_KEYPROV_AAD_V1
+  wire_digest_segments: 9
+  aad_segments: 10
+  aad_field_order: [envelopeFormat, wrappingSuite, purpose, businessKeyVersion, rootKeyVersion, recipientCertificateDigest, requestId, businessDomain, keyId, derivationVersion]
+  wire_field_order: [envelopeFormat, requestId, businessDomain, purpose, keyId, businessKeyVersion, wrappingSuite, wrappedKey, parameters]
+  business_key_version_encoding: uint64be-8-bytes  # 127/128 both 8B, blocks protobuf-varint misuse
+  keyprov_source_sha256: d2c073def5a51e9027aa8d2d1215ba266fad8fd314acb93e0fd8bef58ac70cea
+  keyprov_descriptor_sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230  # unchanged (comment-only)
+  canonical_reference_impl: verify/KeyprovCanonicalV1.java
+  vector_producer: verify/KeyprovCr009VectorProducer.java
+  vector_check: verify/KeyprovCr009VectorCheck.java
+  vector_bundle:
+    location: verify/keyprov-ecdh-es-p256-v1/
+    official_files: [vector.json, canonical_aad.bin, aad_digest.hex, parameters.pb, wrapped_key.bin, wire_digest_input.bin, wire_envelope_digest.hex, proof_input_v1.bin, key_check_value.bin, manifest.json]
+    negative_subdirectory: negative/
+    vector_json_sha256: 357499a0a409e2abe6d6ca3274dd33ae1ee8ac36326c0e9498057892268491ee
+    manifest_sha256: 22f5de6557d995f37752e8ff969ad88cf66099f1b7b9854b0ff2ea625ba36230
+  boundary_coverage: [version 1, 127, 128, 255, 256, 2^32, 2^63-1, purpose 1/2, enum varint 127/128, raw certificate digest]
+  negative_coverage: [unknown enum, unknown field, illegal lengths, parameters re-encoding, per-segment tampering (wire 9 + AAD 10)]
+  # REQ-009-5 in-place v1 correction gate: capability remains DOWN until the
+  # production audit PROVES no environment holds any old-口径 ECDH-ES v1 ACTIVE
+  # record, success ACK, SEC COMMITTED state, success proof or delivered success
+  # consumer. If such a record exists, v1 must NOT be re-interpreted; a new
+  # v2 format/profile must be introduced instead.
+  production_audit:
+    status: PENDING-AUDIT
+    required_evidence:
+      - no ACTIVE ECDH-ES v1 record in ANY production environment
+      - no success KeyProvisioningAck
+      - no SEC COMMITTED journal entry
+      - no success import proof
+      - no delivered success consumer
+    capability_gate: V2C ECDH-ES remains DOWN until audit evidence attached and release-set upgrade complete
+  release_set_gate:
+    - par_proto_cr009_release
+    - veh_proto_lock (PAR-PROTO release/source/DescriptorSet/vector hash)
+    - fw_sec_aad_profile capability
+    - vmd_mapper_wire_digest
+    - tbox_sec_vector_regression
+    - relay_byte_for_byte
+    - e2e Request/Response/Import/ACK/ACTIVE
+
 # ---- Release manifest (PAR-PROTO-DSN-CR-005 §9) ----------------------------
 release_manifest:
   inventory_canonicalization_versions: [1, 2]
@@ -360,6 +435,12 @@ release_manifest:
     descriptor: descriptors/security-keyprov-v1.pb
     source_bundle: security-keyprov-v1-sources.tar.gz
     sha256: cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230
+    # CR-009: wire canonical 收口 — profiles + single authoritative vector bundle.
+    wire_profile: PAR_PROTO_KEYPROV_ECDH_ES_P256_V1
+    aad_profile: PAR_PROTO_KEYPROV_AAD_V1
+    vector_bundle: verify/keyprov-ecdh-es-p256-v1/
+    vector_bundle_sha256: 22f5de6557d995f37752e8ff969ad88cf66099f1b7b9854b0ff2ea625ba36230
+    production_audit_gate: PENDING-AUDIT (REQ-009-5: v1 in-place correction requires proof of no ACTIVE/success records in ANY env; else v2)
     # CR-007: envelope v1 capability requires supported_envelope_formats +
     # DescriptorSet hash + PAR-PROTO release + FW-SEC Provider readiness.
     envelope_formats: [KEY_ENVELOPE_FORMAT_ECDH_ES_P256_V1]

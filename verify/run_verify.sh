@@ -28,6 +28,12 @@
 #       CR-008 ack with fields 10/11 + P1363 low-S placeholder) — CR-008 §3/§4/§5
 #   18. CR-008 keyprov integration check (relay + additive downgrade + fail-closed
 #       unknown/legacy algorithm + P1363 format/range + proofInputV1 binding)
+#   19. CR-009 authoritative vector bundle producer (verify/keyprov-ecdh-es-p256-v1:
+#        9-field wireDigestInput/wireEnvelopeDigest + 10-segment canonical AAD +
+#        proofInputV1 + boundary/negative vectors + manifest)
+#                                                        - CR-009 §2/§4, REQ-009-4
+#   20. CR-009 vector check (bundle integrity + boundary vectors + negatives +
+#        CR-007/008 golden regression)                   - CR-009 §2/§4, REQ-009 acc.
 #                                                        — CR-008 §3/§4/§5/§9
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
@@ -40,7 +46,7 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/18] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/20] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
@@ -146,8 +152,8 @@ shasum -a 256 \
   iov-cloud-proto-keyprov/src/main/proto/security/keyprov/v1/key_provisioning.proto \
   descriptors/security-keyprov-v1.pb \
   > /tmp/cr006_checksums.txt
-grep -q "5e737477ddc1cae57a8ac2350870c7614f2b2f378e17a51db15a03321cd944dd" /tmp/cr006_checksums.txt && pass "keyprov source sha256 matches manifest (CR-008)" || fail "keyprov source sha256 mismatch"
-grep -q "cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230" /tmp/cr006_checksums.txt && pass "keyprov descriptor sha256 matches manifest (CR-008)" || fail "keyprov descriptor sha256 mismatch"
+grep -q "d2c073def5a51e9027aa8d2d1215ba266fad8fd314acb93e0fd8bef58ac70cea" /tmp/cr006_checksums.txt && pass "keyprov source sha256 matches manifest (CR-009 comment-only)" || fail "keyprov source sha256 mismatch"
+grep -q "cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230" /tmp/cr006_checksums.txt && pass "keyprov descriptor sha256 matches manifest (CR-008, unchanged by CR-009 comment-only)" || fail "keyprov descriptor sha256 mismatch"
 
 # ---- 5. Descriptor determinism ---------------------------------------------
 step 5 "DescriptorSet determinism (regenerate + compare)"
@@ -409,6 +415,38 @@ if [ -f "$PB_JAR" ]; then
     -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr008IntegrationCheck.java
   java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
     KeyprovCr008IntegrationCheck
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 19. CR-009 authoritative vector bundle producer (§2/§4, REQ-009-4) -----
+step 19 "CR-009 keyprov wire canonical vector bundle (keyprov-ecdh-es-p256-v1)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes" \
+    -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr009VectorProducer.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
+    KeyprovCr009VectorProducer
+  pass "CR-009 authoritative vector bundle produced (official files + negative/)"
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 20. CR-009 vector check (§2/§4, REQ-CR-009 acceptance) ----------------
+step 20 "CR-009 vector check (manifest + wire digest + AAD registry + boundaries + negatives)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes" \
+    -d verify/out verify/KeyprovCanonicalV1.java verify/KeyprovCr009VectorCheck.java
+  java -cp "$PB_JAR:iov-cloud-proto-keyprov/target/classes:iov-cloud-proto-vehicle-common/target/classes:verify/out" \
+    KeyprovCr009VectorCheck
+  # vector bundle hashes must match the provenance manifest (cr009_extension)
+  shasum -a 256 verify/keyprov-ecdh-es-p256-v1/manifest.json \
+    verify/keyprov-ecdh-es-p256-v1/vector.json > /tmp/cr009_bundle_checksums.txt
+  grep -q "22f5de6557d995f37752e8ff969ad88cf66099f1b7b9854b0ff2ea625ba36230" /tmp/cr009_bundle_checksums.txt \
+    && grep -q "357499a0a409e2abe6d6ca3274dd33ae1ee8ac36326c0e9498057892268491ee" /tmp/cr009_bundle_checksums.txt \
+    && pass "CR-009 vector bundle hashes match provenance manifest" \
+    || fail "CR-009 vector bundle hashes differ from provenance manifest"
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
 fi

@@ -22,7 +22,7 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
 
 /**
  * security.keyprov.v1 ECDH-ES v1 canonical reference implementation
- * (PAR-PROTO-DSN-CR-007 §4 / §5 / §6 / §7).
+ * (PAR-PROTO-DSN-CR-007 §4 / §5 / §6 / §7, PAR-PROTO-DSN-CR-009 §2).
  *
  * <p>PAR-PROTO-DSN-CR-008 adds the versioned {@code proofInputV1} production
  * canonical method, {@code V2C_COMM} businessDomain gate, frozen purpose 1/2
@@ -30,25 +30,43 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
  * low-S format/range contract. It still performs NO cryptographic verification:
  * device signing is owned by TBOX-SEC and real ECDSA verification by FW-SEC.
  *
+ * <p>PAR-PROTO-DSN-CR-009 freezes the V2C wire canonical registry: the 9-field
+ * {@code wireEnvelopeDigest} (WIRE_PROFILE {@link #WIRE_PROFILE}) is the ONLY
+ * digest carried in {@code WrappedKeyItem.envelope_digest} / {@code
+ * KeyImportItemResult.envelope_digest}; the 10-segment canonical AAD (AAD_PROFILE
+ * {@link #AAD_PROFILE}) is frozen by this registry and the authoritative vector
+ * bundle {@code verify/keyprov-ecdh-es-p256-v1/}. FW-SEC's 18-field
+ * {@code coreEnvelopeDigest} stays an internal result-integrity fact and MUST
+ * NOT enter the wire, ACK or import attestation.
+ *
  * This class is the single Java authority for the cross-language (Java/C++)
  * byte-exact contract of the ECDH-ES v1 envelope. It deliberately contains NO
  * key material and NO cryptography beyond hashing: the design freezes the
  * canonical framing, digests and gates here; the actual ECDH/HKDF/AEAD and the
  * ACK proof algorithm are owned by FW-SEC / TBOX-SEC.
  *
- * Framing (design §4.2 / §5):
+ * Framing (design §4.2 / CR-009 §2.1):
  *   - every segment is prefixed with an unsigned 32-bit big-endian length;
- *   - strings enter as raw UTF-8 bytes;
- *   - enums enter as their canonical unsigned varint integer value;
- *   - bytes enter as raw content;
- *   - businessKeyVersion enters as a fixed 8-byte big-endian uint64
- *     (design §4.2 leaves this unstated; this repo pins the §5 proofInput
- *     convention and records it in the golden vectors).
+ *   - strings enter as raw UTF-8 bytes (no BOM, no trim, no case-fold);
+ *   - enums enter as their canonical shortest unsigned varint integer value
+ *     (never name()/ordinal()/ZigZag);
+ *   - bytes (wrappedKey / parameters / recipientCertificateDigest) enter as
+ *     raw content;
+ *   - businessKeyVersion / rootKeyVersion enter as a fixed 8-byte big-endian
+ *     uint64 (never protobuf varint / decimal text).
  *
- *   envelopeDigest = SHA-256(lengthPrefixed(
+ *   wireDigestInput = lengthPrefixed(
  *       envelopeFormat, requestId, businessDomain, purpose, keyId,
- *       businessKeyVersion, wrappingSuite, wrappedKey, parameters))
+ *       businessKeyVersion, wrappingSuite, wrappedKey, parameters)
+ *   wireEnvelopeDigest = SHA-256(wireDigestInput)
  *   (the envelope_digest field itself never enters the digest)
+ *
+ *   canonicalAad (CR-009 §2.2, 10 segments, order frozen):
+ *     envelopeFormat(varint) || wrappingSuite(varint) || purpose(varint)
+ *     || uint64be(businessKeyVersion) || uint64be(rootKeyVersion)
+ *     || recipientCertificateDigest(raw) || UTF8(requestId)
+ *     || UTF8(businessDomain) || UTF8(keyId) || UTF8(derivationVersion)
+ *   aadDigest = SHA-256(canonicalAad)
  *
  *   proofInput = lengthPrefixed(
  *       UTF8("openiov|keyprov-ack|v1"), UTF8(requestId), UTF8(businessDomain),
@@ -59,8 +77,7 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
  *   production method. The pre-CR-008 proofInput(...) is @Deprecated and only a
  *   compatibility regression vector.
  *
- *   aadDigest      = SHA-256(canonicalAad)
- *   keyCheckValue  = first_3_bytes(SHA-256(businessKey))
+ *   keyCheckValue = first_3_bytes(SHA-256(businessKey))
  *
  * Producers and consumers MUST NOT customize field order, wire kind, string
  * comparison, domain framing or the fixed v1 lengths below.
@@ -68,6 +85,16 @@ import net.hwyz.iov.security.keyprov.v1.WrappingSuite;
 public final class KeyprovCanonicalV1 {
 
   public static final String PROOF_DOMAIN = "openiov|keyprov-ack|v1";
+
+  // ---- CR-009 wire canonical registry (PAR-PROTO-DSN-CR-009 §2) ------------
+  /** 9-field wire envelope digest profile, frozen by the PAR-PROTO registry. */
+  public static final String WIRE_PROFILE = "PAR_PROTO_KEYPROV_ECDH_ES_P256_V1";
+  /** 10-segment canonical AAD profile, frozen by the PAR-PROTO registry. */
+  public static final String AAD_PROFILE = "PAR_PROTO_KEYPROV_AAD_V1";
+  /** FW-SEC 18-field internal digest name; MUST NOT enter the wire/ACK/proof. */
+  public static final String CORE_ENVELOPE_DIGEST_NAME = "coreEnvelopeDigest";
+  /** PAR-PROTO wire digest name carried in envelope_digest fields. */
+  public static final String WIRE_ENVELOPE_DIGEST_NAME = "wireEnvelopeDigest";
 
   public static final int FORMAT_VERSION_V1 = 1;
   public static final int EPHEMERAL_PUBLIC_KEY_BYTES = 65;   // 0x04 || X(32) || Y(32)
@@ -164,6 +191,56 @@ public final class KeyprovCanonicalV1 {
     return sha256(canonicalAad == null ? new byte[0] : canonicalAad);
   }
 
+  // ---- CR-009 canonical AAD registry (§2.2) --------------------------------
+
+  /**
+   * CR-009 §2.2: the 10-segment canonical AAD frozen by the PAR-PROTO registry
+   * (AAD_PROFILE {@link #AAD_PROFILE}). Field order and segment rules are fixed:
+   * envelopeFormat / wrappingSuite / purpose as shortest unsigned varint,
+   * businessKeyVersion / rootKeyVersion as 8-byte big-endian uint64,
+   * recipientCertificateDigest as raw 32 bytes, strings as no-BOM UTF-8.
+   * The cloud AES-GCM encryption MUST use exactly these bytes; TBOX-SEC rebuilds
+   * the AAD from the outer context and compares in constant time.
+   */
+  public static byte[] canonicalAad(WrappedKeyItem item, EcdhEsP256EnvelopeParametersV1 params,
+      String requestId, String businessDomain) {
+    if (item == null || params == null) {
+      throw new InvalidKeyprovInput("canonical AAD requires item and parameters");
+    }
+    return lengthPrefixed(
+        unsignedVarint(item.getEnvelopeFormatValue()),
+        unsignedVarint(item.getWrappingSuiteValue()),
+        unsignedVarint(item.getPurposeValue()),
+        uint64be(item.getBusinessKeyVersion()),
+        uint64be(params.getRootKeyVersion()),
+        params.getRecipientCertificateDigest().toByteArray(),
+        utf8(requestId),
+        utf8(businessDomain),
+        utf8(item.getKeyId()),
+        utf8(params.getDerivationVersion()));
+  }
+
+  /**
+   * CR-009 §2.2 / §8.2.2.3: rebuild the canonical AAD from the outer Response /
+   * request context and bind it to the carried {@code canonical_aad} + {@code
+   * aad_digest}. Constant-time comparison; any mismatch rejects the whole item.
+   * (The real AES-GCM unseal with the same AAD is owned by TBOX-SEC.)
+   */
+  public static void validateAadBinding(WrappedKeyItem item,
+      EcdhEsP256EnvelopeParametersV1 params, String requestId, String businessDomain) {
+    byte[] rebuilt = canonicalAad(item, params, requestId, businessDomain);
+    if (rebuilt.length > MAX_CANONICAL_AAD_BYTES) {
+      throw new InvalidKeyprovInput("canonical_aad > " + MAX_CANONICAL_AAD_BYTES + " bytes");
+    }
+    if (!constantTimeEquals(rebuilt, params.getCanonicalAad().toByteArray())) {
+      throw new InvalidKeyprovInput(
+          "canonical_aad does not match PAR_PROTO_KEYPROV_AAD_V1 registry rebuild");
+    }
+    if (!constantTimeEquals(aadDigest(rebuilt), params.getAadDigest().toByteArray())) {
+      throw new InvalidKeyprovInput("aad_digest does not match SHA-256(canonicalAad)");
+    }
+  }
+
   /**
    * Deterministic protobuf serialization of the v1 parameters message
    * (design §4.1). Enables protobuf deterministic serialization explicitly so
@@ -196,11 +273,15 @@ public final class KeyprovCanonicalV1 {
     }
   }
 
-  // ---- canonical digests ----------------------------------------------------
+  // ---- CR-009 wire envelope digest (§2.1) ---------------------------------
 
-  /** design §4.2 canonical envelope digest (excludes envelope_digest itself). */
-  public static byte[] envelopeDigest(String requestId, String businessDomain, WrappedKeyItem item) {
-    return sha256(lengthPrefixed(
+  /**
+   * CR-009 §2.1: raw 9-segment wire digest input (before SHA-256). Exposed so
+   * the authoritative vector bundle can freeze {@code wire_digest_input.bin}
+   * and Java/C++ can compare byte-exactly.
+   */
+  public static byte[] wireDigestInput(String requestId, String businessDomain, WrappedKeyItem item) {
+    return lengthPrefixed(
         unsignedVarint(item.getEnvelopeFormatValue()),
         utf8(requestId),
         utf8(businessDomain),
@@ -209,7 +290,30 @@ public final class KeyprovCanonicalV1 {
         uint64be(item.getBusinessKeyVersion()),
         unsignedVarint(item.getWrappingSuiteValue()),
         item.getWrappedKey().toByteArray(),
-        item.getParameters().toByteArray()));
+        item.getParameters().toByteArray());
+  }
+
+  /**
+   * CR-009 §2.1: the single production wire digest
+   * {@code SHA-256(wireDigestInput)}, profile {@link #WIRE_PROFILE}. Carried in
+   * {@code envelope_digest}; it is NOT FW-SEC {@link #CORE_ENVELOPE_DIGEST_NAME}.
+   */
+  public static byte[] wireEnvelopeDigest(String requestId, String businessDomain,
+      WrappedKeyItem item) {
+    return sha256(wireDigestInput(requestId, businessDomain, item));
+  }
+
+  /**
+   * CR-007 legacy alias of {@link #wireEnvelopeDigest(String, String,
+   * WrappedKeyItem)}. Kept ONLY so the CR-007/CR-008 golden reference bytes stay
+   * byte-identical (additive wire). Production code and new vectors must use
+   * {@link #wireEnvelopeDigest}.
+   *
+   * @deprecated use {@link #wireEnvelopeDigest(String, String, WrappedKeyItem)}.
+   */
+  @Deprecated
+  public static byte[] envelopeDigest(String requestId, String businessDomain, WrappedKeyItem item) {
+    return wireEnvelopeDigest(requestId, businessDomain, item);
   }
 
   /**
@@ -330,7 +434,7 @@ public final class KeyprovCanonicalV1 {
     parseAndValidateParameters(item.getParameters().toByteArray());
     exactLength("envelope_digest", item.getEnvelopeDigest(), DIGEST_BYTES);
     exactLength("key_check_value", item.getKeyCheckValue(), KCV_BYTES);
-    byte[] recomputed = envelopeDigest(requestId, businessDomain, item);
+    byte[] recomputed = wireEnvelopeDigest(requestId, businessDomain, item);
     if (!Arrays.equals(recomputed, item.getEnvelopeDigest().toByteArray())) {
       throw new InvalidKeyprovInput("envelope_digest mismatch (recomputed != carried)");
     }

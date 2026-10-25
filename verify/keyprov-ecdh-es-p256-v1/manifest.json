@@ -1,0 +1,18 @@
+{
+  "release": {"cr": "PAR-PROTO-DSN-CR-009", "protocol_version": "keyprov-v1"},
+  "profile": {"wire": "PAR_PROTO_KEYPROV_ECDH_ES_P256_V1", "aad": "PAR_PROTO_KEYPROV_AAD_V1"},
+  "toolchain": {"protoc": "3.25.5", "protobuf-java": "3.25.5", "buf": "1.72.0", "maven": "3.9.14", "jdk": "17"},
+  "source": {"file": "iov-cloud-proto-keyprov/src/main/proto/security/keyprov/v1/key_provisioning.proto", "sha256": "d2c073def5a51e9027aa8d2d1215ba266fad8fd314acb93e0fd8bef58ac70cea"},
+  "descriptor": {"file": "descriptors/security-keyprov-v1.pb", "sha256": "cd610406aad05d5215a953c140a28b547fa3b2eb537ac7b27023e2911c3f5230"},
+  "files": {
+    "canonical_aad.bin": {"sha256": "350a100039471cfda6af7a82944f28cc7941bf39bd26da2efbd807b62a062cfa", "bytes": 139},
+    "aad_digest.hex": {"sha256": "62ad369aeca6eb20b7a180f8342382a8f28ad56886dddcafd4abe2a5823460a3", "bytes": 65},
+    "parameters.pb": {"sha256": "0b5e82dcbe134dbba83e848f5e69ff72e767cd97cdd69a34f0f7fa02fecb273a", "bytes": 379},
+    "wrapped_key.bin": {"sha256": "ee8e658590c9a5e119400a774415a01db104de1ee6e2c29ec69aa73ef46544d2", "bytes": 64},
+    "wire_digest_input.bin": {"sha256": "ed8c62ac2b24f067a5760cd71845f23c9d13541eb729329941b61aa3f8d731b7", "bytes": 524},
+    "wire_envelope_digest.hex": {"sha256": "3b6ab9cb5d91c47da837b2577261bd8e1ff2df4bf7d2d7be29c63778549d63d3", "bytes": 65},
+    "proof_input_v1.bin": {"sha256": "53b5038b3423384f1b23f17c64a5421647f6c826b684460f4696267d322fe338", "bytes": 149},
+    "key_check_value.bin": {"sha256": "0393e6872a49d3ddd462a1e4f24b8a0f215e81d2cb8fc3a68f9b742ea95c0799", "bytes": 3}
+  },
+  "negative_vectors": "negative/"
+}
