@@ -37,6 +37,7 @@
     {"file": "fota_download_reset_offset.bin", "bytes": 144, "sha256": "052db0b0353c00b8f284583fb3e05ea2f607b7f3fd1fe6bbb58af4bab74b2c1d"},
     {"file": "fota_download_unknown_enum.bin", "bytes": 140, "sha256": "fa2c8d56b4a60aedc57f18516a614f00282387e309516b6530ab3d135bd0e97b"},
     {"file": "fota_download_unknown_field.bin", "bytes": 144, "sha256": "fef3e51b895436d3d9a13401a1a995e4a8356f2a03a17c2eabb846a07388bd22"},
+    {"file": "fota_download_uint64_high_bit.bin", "bytes": 147, "sha256": "d3cee60c8e294ef329b31cf0ad5ce0c5a0445ee97789fbe386139f8b56729eb2"},
     {"file": "fota_download_response_current.bin", "bytes": 18, "sha256": "49383aa6ffcf90a4bae0b2e3a6df67a77e2eda30ae1bfec010fd58c531883aa7"},
     {"file": "fota_download_response_late.bin", "bytes": 18, "sha256": "2593c6add33e7e22828aee27579cf3ec3fbd3ff98217a175caea6b846e52f59e"},
     {"file": "fota_download_response_duplicate.bin", "bytes": 18, "sha256": "c1ed7edf3b0429e3ca9a096e1204ca0ec9f8abcb0c4c2a81c9b25a02295ec475"},

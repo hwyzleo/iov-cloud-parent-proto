@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "cr": "PAR-PROTO-DSN-CR-011",
+  "registry": "vehicle.fota.v1.DownloadProgressResponse.deny_reason",
+  "second_unique_key": "(vehicle_task_id, package_id, download_attempt_no, progress_seq)",
+  "deny_reasons": [
+    {"deny_reason": "PROGRESS_ID_MISSING", "trigger": "progress_id is empty", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "VEHICLE_TASK_ID_MISSING", "trigger": "vehicle_task_id is empty", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "PACKAGE_ID_MISSING", "trigger": "package_id is empty", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "PACKAGE_REVISION_MISSING", "trigger": "package_revision is empty", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "DOWNLOAD_ATTEMPT_NO_INVALID", "trigger": "download_attempt_no is 0 or its uint32 high bit is set (Java int < 0)", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "PROGRESS_SEQ_INVALID", "trigger": "progress_seq is 0 or its uint64 high bit is set (Java long < 0)", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "TOTAL_BYTES_INVALID", "trigger": "total_bytes is 0 or its uint64 high bit is set (Java long < 0)", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "DOWNLOADED_BYTES_INVALID", "trigger": "downloaded_bytes has its uint64 high bit set (Java long < 0) or exceeds total_bytes", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "RESUME_OFFSET_INVALID", "trigger": "resume_offset has its uint64 high bit set (Java long < 0) or exceeds downloaded_bytes", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "OCCURRED_AT_INVALID", "trigger": "occurred_at_ms < 0", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "DOWNLOAD_STATE_UNSUPPORTED", "trigger": "download_state is UNSPECIFIED or unknown", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "DIGEST_ALGORITHM_UNSUPPORTED", "trigger": "event_digest.algorithm is not exactly SHA-256", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "DIGEST_VALUE_INVALID", "trigger": "event_digest.value_hex is not exactly 64 lowercase hexadecimal characters", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "COMPLETED_BYTES_MISMATCH", "trigger": "download_state is COMPLETED and downloaded_bytes != total_bytes", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "RESET_OFFSET_BASELINE_MISMATCH", "trigger": "download_state is RESET_OFFSET and downloaded_bytes != resume_offset", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "RESET_OFFSET_UNAUTHORIZED", "trigger": "non-zero RESET_OFFSET has no latest in-scope unexpired DownloadGrant with the exact current_offset_bytes and resume_allowed=true", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "OBJECT_BOUNDARY_CHANGED", "trigger": "non-RESET_OFFSET report changes package_revision or etag within the current attempt snapshot", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "BYTES_REGRESSION", "trigger": "non-RESET_OFFSET report with higher progress_seq decreases downloaded_bytes or resume_offset", "disposition": "REJECTED", "occupies_second_unique_key": false},
+    {"deny_reason": "SECOND_KEY_CONFLICT", "trigger": "a different progress_id occupies the same (vehicle_task_id, package_id, download_attempt_no, progress_seq)", "disposition": "CONFLICT", "occupies_second_unique_key": false},
+    {"deny_reason": "DIGEST_CONFLICT", "trigger": "progress_id already exists with a different event_digest", "disposition": "CONFLICT", "occupies_second_unique_key": false}
+  ]
+}

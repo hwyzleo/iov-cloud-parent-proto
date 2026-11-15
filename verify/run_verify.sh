@@ -41,13 +41,13 @@
 #        {case_id, input_hash, expected_hash, actual_action, counters, pass})
 #                                                        - CR-010 §8.6.4
 #   23. CR-011 download-progress golden producer + manifest/provenance hash
-#        (STARTED/PROGRESS/COMPLETED/RESET_OFFSET/unknown enum/unknown field +
-#         CURRENT/LATE_OBSERVATION/DUPLICATE/CONFLICT/REJECTED, source aggregate,
-#         DescriptorSet, old golden bytes zero-change)     - CR-011 §7/§8, §11
+#        (STARTED/PROGRESS/COMPLETED/RESET_OFFSET/unknown enum/unknown field/uint64
+#         high bit + CURRENT/LATE_OBSERVATION/DUPLICATE/CONFLICT/REJECTED, source
+#         aggregate, DescriptorSet, old golden bytes zero-change) - CR-011 §7/§8, §11
 #   24. CR-011 download acceptance semantics reference model (legality, idempotency,
-#        second unique key, current/late, byte monotonicity, RESET_OFFSET,
-#        object boundary, completion boundary, sampling, time, unknown enum)
-#                                                        - CR-011 §6/§11
+#        second unique key, current/late, byte monotonicity, scoped/expiring grants,
+#        object boundary, completion boundary, sampling, time, unknown enum, and the
+#        machine-readable 20-reason deny registry)       - CR-011 §6/§11
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -154,7 +154,10 @@ shasum -a 256 iov-cloud-proto-fota/src/main/proto/vehicle/fota/v1/download.proto
 grep -q "2a15fa8f63f9d96a3444028d108f2eaab7cf2b3290631f963a83975629bf9612" /tmp/cr011_checksums.txt && pass "download.proto sha256 matches cr011_extension" || fail "download.proto sha256 mismatch"
 # CR-011: golden manifest self hash (records source aggregate + descriptor + every golden)
 shasum -a 256 verify/golden/manifest-cr011.json >> /tmp/cr011_checksums.txt
-grep -q "c0f7ac8e4e8e2db4aa0c5c5f7d0faea3c841cafc5b2bba92944e42815f746712" /tmp/cr011_checksums.txt && pass "golden manifest-cr011.json sha256 matches cr011_extension" || fail "golden manifest-cr011.json sha256 mismatch"
+grep -q "e59777fba3e7b61bc1f9eda44eba369914388f7cee433ab741412a27a409477d" /tmp/cr011_checksums.txt && pass "golden manifest-cr011.json sha256 matches cr011_extension" || fail "golden manifest-cr011.json sha256 mismatch"
+# CR-011: stable deny_reason registry (20 entries; Java/C++ constant-generation input)
+shasum -a 256 verify/download-deny-reasons.json >> /tmp/cr011_checksums.txt
+grep -q "b5146258243bfd820ba2c1355b9bfe2c323ed83f044eb49643284f48800c125e" /tmp/cr011_checksums.txt && pass "download-deny-reasons.json sha256 matches cr011_extension" || fail "download-deny-reasons.json sha256 mismatch"
 # ---- CR-003: vagw source + descriptor (cloud_artifacts section) -----------
 shasum -a 256 \
   iov-cloud-proto-vagw/src/main/proto/vagw/v1/delivery.proto \
@@ -530,8 +533,8 @@ if [ -f "$PB_JAR" ]; then
   pass "CR-011 golden bytes + verify/golden/manifest-cr011.json produced"
   # manifest is deterministic; its hash pins source aggregate + descriptor + goldens
   if [ "$(shasum -a 256 verify/golden/manifest-cr011.json | cut -d' ' -f1)" = \
-       "c0f7ac8e4e8e2db4aa0c5c5f7d0faea3c841cafc5b2bba92944e42815f746712" ]; then
-    pass "manifest-cr011.json sha256 == c0f7ac8e… (source aggregate + descriptor + goldens frozen)"
+       "e59777fba3e7b61bc1f9eda44eba369914388f7cee433ab741412a27a409477d" ]; then
+    pass "manifest-cr011.json sha256 == e59777fb… (source aggregate + descriptor + goldens frozen)"
   else
     fail "manifest-cr011.json sha256 differs (source/descriptor/golden drift)"
   fi
@@ -555,7 +558,8 @@ if [ -f "$PB_JAR" ]; then
     && grep -q "c1ed7edf3b0429e3ca9a096e1204ca0ec9f8abcb0c4c2a81c9b25a02295ec475" /tmp/cr011_golden_checksums.txt \
     && grep -q "17ece7b62b1fa6e42bc0ba26f7c5666223dd520a4b30bd1d22b87f279df74719" /tmp/cr011_golden_checksums.txt \
     && grep -q "fc18beebf73d68d82ff3a31eda62ef9e4d8bc7383a9dda3b8a0a465e934471a0" /tmp/cr011_golden_checksums.txt \
-    && pass "CR-011 golden hashes match cr011_extension (reports + response matrix)" \
+    && grep -q "d3cee60c8e294ef329b31cf0ad5ce0c5a0445ee97789fbe386139f8b56729eb2" /tmp/cr011_golden_checksums.txt \
+    && pass "CR-011 golden hashes match cr011_extension (reports + uint64 high bit + response matrix)" \
     || fail "CR-011 golden hashes differ from cr011_extension"
   # additive-only regression: pre-CR-011 golden bytes must stay byte-identical
   shasum -a 256 verify/golden/expected/fota_ecu_version_multitarget.bin \
@@ -575,10 +579,10 @@ step 24 "CR-011 download acceptance semantics reference model"
 if [ -f "$PB_JAR" ]; then
   mkdir -p verify/out
   javac -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes" \
-    -d verify/out verify/Cr011SemanticsCheck.java
+    -d verify/out verify/Cr011DenyReasons.java verify/Cr011SemanticsCheck.java
   if java -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes:verify/out" \
       Cr011SemanticsCheck; then
-    pass "CR-011 acceptance reference model verified (idempotency/ordering/reset/boundary/sampling/time)"
+    pass "CR-011 acceptance model verified (high-bit legality/grant/second-key/20-reason registry)"
   else
     fail "CR-011 acceptance reference model diverged"
   fi

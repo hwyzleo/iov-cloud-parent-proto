@@ -1,9 +1,14 @@
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import vehicle.fota.v1.Download;
 import vehicle.fota.v1.Types;
@@ -27,20 +32,27 @@ public class Cr011SemanticsCheck {
 
   private static final long TOTAL = 1048576L;
   private static final long T0 = 1800000000000L;
+  private static Cr011DenyReasons denyReasons;
+  private static final Set<String> observedDenyReasons = new HashSet<>();
 
   public static void main(String[] args) throws Exception {
+    denyReasons = Cr011DenyReasons.load();
+    denyRegistry();
     normalFlow();
     idempotency();
     secondUniqueKey();
     ordering();
     byteMonotonicity();
     resetOffset();
+    grantScopeAndExpiry();
     objectBoundary();
     completionBoundary();
     timeFields();
     legality();
+    uint64HighBitGolden();
     unknownState();
     sampling();
+    denyRegistryCoverage();
 
     System.out.println();
     if (failures == 0) {
@@ -113,6 +125,8 @@ public class Cr011SemanticsCheck {
     expect("second key: different id on same (task,pkg,attempt,seq) -> CONFLICT",
         clash, Disposition.CONFLICT, false, 2);
     check("second key: CONFLICT appends no history", a.history.size() == 2);
+    check("second key: CONFLICT does not occupy or replace a second unique key",
+        a.progressIdBySecondKey.size() == 2);
 
     AcceptResult sameDigestClash = a.accept(base("DP-OTHER-2", 2)
         .setEventDigest(digest("DP-2")).setDownloadedBytes(1000).build());
@@ -124,6 +138,20 @@ public class Cr011SemanticsCheck {
         .setDownloadedBytes(1000).build());
     expect("second key: new downloadAttemptNo is an independent sequence", newAttempt,
         Disposition.CURRENT, true, 3);
+
+    DownloadAcceptance rejectedDoesNotOccupy = new DownloadAcceptance();
+    expectDeny("second key: REJECTED report is denied",
+        rejectedDoesNotOccupy.accept(base("DP-REJECTED", 3).setTotalBytes(0).build()),
+        Disposition.REJECTED, false, 0, "TOTAL_BYTES_INVALID");
+    check("second key: REJECTED occupies no second unique key",
+        rejectedDoesNotOccupy.progressIdBySecondKey.isEmpty()
+            && rejectedDoesNotOccupy.history.isEmpty());
+    expect("second key: legal report may use a key from a prior REJECTED report",
+        rejectedDoesNotOccupy.accept(base("DP-LEGAL", 3).build()),
+        Disposition.CURRENT, true, 3);
+    check("second key: only the accepted report occupies the key and enters history",
+        rejectedDoesNotOccupy.progressIdBySecondKey.size() == 1
+            && rejectedDoesNotOccupy.history.size() == 1);
   }
 
   /** current vs late observation matrix. */
@@ -172,7 +200,8 @@ public class Cr011SemanticsCheck {
     expect("reset: non-zero offset without DownloadGrant -> REJECTED", a.accept(unauthorized),
         Disposition.REJECTED, false, 2);
 
-    a.grant = new Grant("REV-1", "etag-1", 262144L, true);
+    a.grant = new Grant("VT-CR011", "PKG-CR011", "REV-1", "etag-1",
+        262144L, true, T0 + 60000L);
     // a fresh progressId: the rejected report above is an idempotent first result
     AcceptResult authorized = a.accept(reset("DP-R1", 3, 262144));
     expect("reset: granted non-zero offset matching current_offset_bytes -> CURRENT",
@@ -199,6 +228,67 @@ public class Cr011SemanticsCheck {
         && fresh.current(1).resumeOffset == 0);
     AcceptResult fromZero = fresh.accept(base("DP-Z3", 3).setDownloadedBytes(1000).build());
     expect("reset: accumulation restarts from 0", fromZero, Disposition.CURRENT, true, 3);
+  }
+
+  /** Latest in-scope DownloadGrant and its deterministic expiry boundary. */
+  private static void grantScopeAndExpiry() {
+    DownloadAcceptance a = new DownloadAcceptance();
+    a.grant = new Grant("VT-CR011", "PKG-CR011", "REV-1", "etag-1",
+        262144L, true, T0 + 10000L);
+    a.decisionTimeMs = T0 - 1L;
+    expect("grant: in-scope non-zero offset before expiry -> CURRENT",
+        a.accept(reset("DP-G1", 1, 262144)), Disposition.CURRENT, true, 1);
+
+    // A newer grant for the same task/package replaces the previous grant.
+    a.grant = new Grant("VT-CR011", "PKG-CR011", "REV-1", "etag-1",
+        131072L, true, T0 + 10000L);
+    expectDeny("grant: superseded offset is unauthorized",
+        a.accept(reset("DP-G2", 2, 262144)), Disposition.REJECTED, false, 1,
+        "RESET_OFFSET_UNAUTHORIZED");
+    expect("grant: latest offset is authorized",
+        a.accept(reset("DP-G3", 2, 131072)), Disposition.CURRENT, true, 2);
+
+    a.decisionTimeMs = T0 + 10000L;
+    expectDeny("grant: decision_time == expires_at_ms is expired",
+        a.accept(reset("DP-G4", 3, 131072)), Disposition.REJECTED, false, 2,
+        "RESET_OFFSET_UNAUTHORIZED");
+    check("grant: superseded/expired reports do not advance snapshot or history",
+        a.current(1).seq == 2 && a.history.size() == 2);
+
+    DownloadAcceptance wrongTask = new DownloadAcceptance();
+    wrongTask.grant = new Grant("VT-OTHER", "PKG-CR011", "REV-1", "etag-1",
+        262144L, true, T0 + 10000L);
+    expectDeny("grant: vehicle_task_id outside grant scope is unauthorized",
+        wrongTask.accept(reset("DP-G5", 1, 262144)), Disposition.REJECTED, false, 0,
+        "RESET_OFFSET_UNAUTHORIZED");
+
+    DownloadAcceptance wrongPackage = new DownloadAcceptance();
+    wrongPackage.grant = new Grant("VT-CR011", "PKG-OTHER", "REV-1", "etag-1",
+        262144L, true, T0 + 10000L);
+    expectDeny("grant: package_id outside grant scope is unauthorized",
+        wrongPackage.accept(reset("DP-G6", 1, 262144)), Disposition.REJECTED, false, 0,
+        "RESET_OFFSET_UNAUTHORIZED");
+
+    DownloadAcceptance wrongRevision = new DownloadAcceptance();
+    wrongRevision.grant = new Grant("VT-CR011", "PKG-CR011", "REV-2", "etag-1",
+        262144L, true, T0 + 10000L);
+    expectDeny("grant: package_revision outside grant scope is unauthorized",
+        wrongRevision.accept(reset("DP-G7", 1, 262144)), Disposition.REJECTED, false, 0,
+        "RESET_OFFSET_UNAUTHORIZED");
+
+    DownloadAcceptance wrongEtag = new DownloadAcceptance();
+    wrongEtag.grant = new Grant("VT-CR011", "PKG-CR011", "REV-1", "etag-2",
+        262144L, true, T0 + 10000L);
+    expectDeny("grant: etag outside grant scope is unauthorized",
+        wrongEtag.accept(reset("DP-G8", 1, 262144)), Disposition.REJECTED, false, 0,
+        "RESET_OFFSET_UNAUTHORIZED");
+
+    DownloadAcceptance resumeDenied = new DownloadAcceptance();
+    resumeDenied.grant = new Grant("VT-CR011", "PKG-CR011", "REV-1", "etag-1",
+        262144L, false, T0 + 10000L);
+    expectDeny("grant: resume_allowed=false is unauthorized",
+        resumeDenied.accept(reset("DP-G9", 1, 262144)), Disposition.REJECTED, false, 0,
+        "RESET_OFFSET_UNAUTHORIZED");
   }
 
   /** ETag / packageRevision object boundary. */
@@ -291,6 +381,12 @@ public class Cr011SemanticsCheck {
         a.accept(base("DP-4", 1).setDownloadAttemptNo(0).build()), Disposition.REJECTED, false, 0);
     expect("legality: progress_seq = 0 -> REJECTED",
         a.accept(base("DP-5", 0).build()), Disposition.REJECTED, false, 0);
+    expectDeny("legality: progress_seq uint64 high bit -> REJECTED",
+        a.accept(base("DP-5H", -1L).build()), Disposition.REJECTED, false, 0,
+        "PROGRESS_SEQ_INVALID");
+    expectDeny("legality: download_attempt_no uint32 high bit -> REJECTED",
+        a.accept(base("DP-4H", 1).setDownloadAttemptNo(-1).build()),
+        Disposition.REJECTED, false, 0, "DOWNLOAD_ATTEMPT_NO_INVALID");
     expect("legality: total_bytes = 0 -> REJECTED",
         a.accept(base("DP-6", 1).setTotalBytes(0).build()), Disposition.REJECTED, false, 0);
     expect("legality: downloaded_bytes > total_bytes -> REJECTED",
@@ -299,6 +395,20 @@ public class Cr011SemanticsCheck {
     expect("legality: resume_offset > downloaded_bytes -> REJECTED",
         a.accept(base("DP-8", 1).setDownloadedBytes(10).setResumeOffset(11).build()),
         Disposition.REJECTED, false, 0);
+    expectDeny("legality: downloaded_bytes < 0 -> DOWNLOADED_BYTES_INVALID",
+        a.accept(base("DP-8N", 1).setDownloadedBytes(-1L).setResumeOffset(-5L).build()),
+        Disposition.REJECTED, false, 0, "DOWNLOADED_BYTES_INVALID");
+    expectDeny("legality: resume_offset < 0 -> RESUME_OFFSET_INVALID",
+        a.accept(base("DP-8R", 1).setDownloadedBytes(0).setResumeOffset(-1L).build()),
+        Disposition.REJECTED, false, 0, "RESUME_OFFSET_INVALID");
+    expectDeny("legality: total_bytes < 0 -> TOTAL_BYTES_INVALID",
+        a.accept(base("DP-8T", 1).setTotalBytes(-1L).build()),
+        Disposition.REJECTED, false, 0, "TOTAL_BYTES_INVALID");
+    expectDeny("legality: RESET_OFFSET baseline mismatch -> REJECTED",
+        a.accept(base("DP-8B", 1)
+            .setDownloadState(Download.DownloadState.DOWNLOAD_STATE_RESET_OFFSET)
+            .setDownloadedBytes(1).setResumeOffset(0).build()),
+        Disposition.REJECTED, false, 0, "RESET_OFFSET_BASELINE_MISMATCH");
     expect("legality: eventDigest.algorithm != SHA-256 -> REJECTED",
         a.accept(base("DP-9", 1).setEventDigest(Types.Digest.newBuilder()
             .setAlgorithm("SHA-1").setValueHex(digest("x").getValueHex()).build()).build()),
@@ -308,7 +418,32 @@ public class Cr011SemanticsCheck {
             .setAlgorithm("SHA-256").setValueHex("ABC").build()).build()),
         Disposition.REJECTED, false, 0);
     check("legality: no snapshot created by rejected reports",
-        a.snapshotByAttempt.isEmpty() && a.history.isEmpty());
+        a.snapshotByAttempt.isEmpty() && a.history.isEmpty()
+            && a.progressIdBySecondKey.isEmpty());
+
+    DownloadAcceptance upperBounds = new DownloadAcceptance();
+    expect("legality: signed-domain upper bounds remain valid",
+        upperBounds.accept(base("DP-MAX", Long.MAX_VALUE)
+            .setDownloadAttemptNo(Integer.MAX_VALUE)
+            .setDownloadState(Download.DownloadState.DOWNLOAD_STATE_COMPLETED)
+            .setDownloadedBytes(Long.MAX_VALUE).setTotalBytes(Long.MAX_VALUE)
+            .setResumeOffset(Long.MAX_VALUE).build()),
+        Disposition.CURRENT, true, Long.MAX_VALUE);
+  }
+
+  /** The cross-language request golden carries uint64 downloaded_bytes = 2^64-1. */
+  private static void uint64HighBitGolden() throws Exception {
+    Path golden = Paths.get("verify/golden/expected/fota_download_uint64_high_bit.bin");
+    Download.DownloadProgressReport parsed =
+        Download.DownloadProgressReport.parseFrom(Files.readAllBytes(golden));
+    check("uint64 golden: downloaded_bytes high bit appears as Java long -1",
+        parsed.getDownloadedBytes() == -1L);
+    DownloadAcceptance a = new DownloadAcceptance();
+    expectDeny("uint64 golden: Java and C++ must both reject the high-bit wire value",
+        a.accept(parsed), Disposition.REJECTED, false, 0, "DOWNLOADED_BYTES_INVALID");
+    check("uint64 golden: rejection creates no snapshot/history/second-key occupancy",
+        a.snapshotByAttempt.isEmpty() && a.history.isEmpty()
+            && a.progressIdBySecondKey.isEmpty());
   }
 
   /** UNSPECIFIED / unknown DownloadState fail-closed (never UNSPECIFIED/PROGRESS). */
@@ -354,8 +489,23 @@ public class Cr011SemanticsCheck {
         !DownloadAcceptance.shouldReportProgress(T0, 1000, T0 + 5000, 1000 + (TOTAL / 20) - 1, TOTAL));
   }
 
+  private static void denyRegistry() {
+    check("deny registry: exactly 20 stable reasons loaded from JSON",
+        denyReasons.rules().size() == 20);
+    for (Cr011DenyReasons.Rule rule : denyReasons.rules().values()) {
+      check("deny registry: " + rule.reason + " metadata",
+          (rule.disposition.equals("REJECTED") || rule.disposition.equals("CONFLICT"))
+              && !rule.occupiesSecondUniqueKey && !rule.trigger.isEmpty());
+    }
+  }
+
+  private static void denyRegistryCoverage() {
+    check("deny registry: every registered reason is exercised by the reference model",
+        observedDenyReasons.equals(denyReasons.rules().keySet()));
+  }
+
   // ===========================================================================
-  // Reference acceptance model (deterministic, in-memory, no clock, no I/O)
+  // Reference acceptance model (deterministic, in-memory, injected decision time)
   // ===========================================================================
 
   enum Disposition {
@@ -386,6 +536,14 @@ public class Cr011SemanticsCheck {
 
     AcceptResult(Disposition disposition, boolean accepted, long latestAcceptedProgressSeq,
         String denyReason, boolean appendedHistory, boolean advancedSnapshot) {
+      if (denyReason != null) {
+        Cr011DenyReasons.Rule rule = denyReasons.require(denyReason);
+        if (!rule.disposition.equals(disposition.name()) || accepted
+            || rule.occupiesSecondUniqueKey) {
+          throw new IllegalArgumentException("deny_reason registry mismatch: " + denyReason);
+        }
+        observedDenyReasons.add(denyReason);
+      }
       this.disposition = disposition;
       this.accepted = accepted;
       this.latestAcceptedProgressSeq = latestAcceptedProgressSeq;
@@ -409,16 +567,23 @@ public class Cr011SemanticsCheck {
   }
 
   static final class Grant {
+    final String vehicleTaskId;
+    final String packageId;
     final String packageRevision;
     final String etag;
     final long authorizedOffset;
     final boolean resumeAllowed;
+    final Long expiresAtMs;
 
-    Grant(String packageRevision, String etag, long authorizedOffset, boolean resumeAllowed) {
+    Grant(String vehicleTaskId, String packageId, String packageRevision, String etag,
+        long authorizedOffset, boolean resumeAllowed, Long expiresAtMs) {
+      this.vehicleTaskId = vehicleTaskId;
+      this.packageId = packageId;
       this.packageRevision = packageRevision;
       this.etag = etag;
       this.authorizedOffset = authorizedOffset;
       this.resumeAllowed = resumeAllowed;
+      this.expiresAtMs = expiresAtMs;
     }
   }
 
@@ -432,6 +597,7 @@ public class Cr011SemanticsCheck {
     final Map<String, String> progressIdBySecondKey = new HashMap<>();
     final List<String> history = new ArrayList<>();
     Grant grant;
+    long decisionTimeMs = T0;
 
     // install-boundary observability (must stay untouched by download progress)
     boolean executionCreated = false;
@@ -466,7 +632,7 @@ public class Cr011SemanticsCheck {
       if (first != null) {
         if (!first.digestHex.equals(r.getEventDigest().getValueHex())) {
           return new AcceptResult(Disposition.CONFLICT, false, latestSeq(current),
-              "DIGEST_CONFLICT", false, false);
+              deny("DIGEST_CONFLICT"), false, false);
         }
         // replay: accepted -> DUPLICATE, rejected/conflict -> original outcome
         if (first.result.disposition == Disposition.REJECTED
@@ -481,19 +647,22 @@ public class Cr011SemanticsCheck {
       String owner = progressIdBySecondKey.get(secondKey);
       if (owner != null && !owner.equals(r.getProgressId())) {
         return record(r, new AcceptResult(Disposition.CONFLICT, false, latestSeq(current),
-            "SECOND_KEY_CONFLICT", false, false));
+            deny("SECOND_KEY_CONFLICT"), false, false));
       }
 
       boolean reset = r.getDownloadState() == Download.DownloadState.DOWNLOAD_STATE_RESET_OFFSET;
       if (reset) {
         if (r.getResumeOffset() > 0) {
           boolean authorized = grant != null && grant.resumeAllowed
+              && grant.vehicleTaskId.equals(r.getVehicleTaskId())
+              && grant.packageId.equals(r.getPackageId())
               && grant.packageRevision.equals(r.getPackageRevision())
               && grant.etag.equals(r.getEtag())
+              && (grant.expiresAtMs == null || decisionTimeMs < grant.expiresAtMs)
               && grant.authorizedOffset == r.getResumeOffset();
           if (!authorized) {
             return record(r, new AcceptResult(Disposition.REJECTED, false, latestSeq(current),
-                "RESET_OFFSET_UNAUTHORIZED", false, false));
+                deny("RESET_OFFSET_UNAUTHORIZED"), false, false));
           }
         }
       } else if (current != null) {
@@ -501,13 +670,13 @@ public class Cr011SemanticsCheck {
         boolean revisionChanged = !current.packageRevision.equals(r.getPackageRevision());
         if (etagChanged || revisionChanged) {
           return record(r, new AcceptResult(Disposition.REJECTED, false, latestSeq(current),
-              "OBJECT_BOUNDARY_CHANGED", false, false));
+              deny("OBJECT_BOUNDARY_CHANGED"), false, false));
         }
         if (r.getProgressSeq() > current.seq
             && (r.getDownloadedBytes() < current.downloadedBytes
                 || r.getResumeOffset() < current.resumeOffset)) {
           return record(r, new AcceptResult(Disposition.REJECTED, false, latestSeq(current),
-              "BYTES_REGRESSION", false, false));
+              deny("BYTES_REGRESSION"), false, false));
         }
       }
 
@@ -554,29 +723,36 @@ public class Cr011SemanticsCheck {
     }
 
     private static String validate(Download.DownloadProgressReport r) {
-      if (r.getProgressId().isEmpty()) return "PROGRESS_ID_MISSING";
-      if (r.getVehicleTaskId().isEmpty()) return "VEHICLE_TASK_ID_MISSING";
-      if (r.getPackageId().isEmpty()) return "PACKAGE_ID_MISSING";
-      if (r.getPackageRevision().isEmpty()) return "PACKAGE_REVISION_MISSING";
-      if (r.getDownloadAttemptNo() < 1) return "DOWNLOAD_ATTEMPT_NO_INVALID";
-      if (r.getProgressSeq() < 1) return "PROGRESS_SEQ_INVALID";
-      if (r.getTotalBytes() <= 0) return "TOTAL_BYTES_INVALID";
-      if (r.getDownloadedBytes() > r.getTotalBytes()) return "DOWNLOADED_BYTES_INVALID";
-      if (r.getResumeOffset() > r.getDownloadedBytes()) return "RESUME_OFFSET_INVALID";
-      if (r.getOccurredAtMs() < 0) return "OCCURRED_AT_INVALID";
+      if (r.getProgressId().isEmpty()) return deny("PROGRESS_ID_MISSING");
+      if (r.getVehicleTaskId().isEmpty()) return deny("VEHICLE_TASK_ID_MISSING");
+      if (r.getPackageId().isEmpty()) return deny("PACKAGE_ID_MISSING");
+      if (r.getPackageRevision().isEmpty()) return deny("PACKAGE_REVISION_MISSING");
+      if (r.getDownloadAttemptNo() < 1) return deny("DOWNLOAD_ATTEMPT_NO_INVALID");
+      if (r.getProgressSeq() < 1) return deny("PROGRESS_SEQ_INVALID");
+      if (r.getTotalBytes() < 0) return deny("TOTAL_BYTES_INVALID");
+      if (r.getTotalBytes() == 0) return deny("TOTAL_BYTES_INVALID");
+      if (r.getDownloadedBytes() < 0) return deny("DOWNLOADED_BYTES_INVALID");
+      if (r.getResumeOffset() < 0) return deny("RESUME_OFFSET_INVALID");
+      if (r.getDownloadedBytes() > r.getTotalBytes()) return deny("DOWNLOADED_BYTES_INVALID");
+      if (r.getResumeOffset() > r.getDownloadedBytes()) return deny("RESUME_OFFSET_INVALID");
+      if (r.getOccurredAtMs() < 0) return deny("OCCURRED_AT_INVALID");
       if (r.getDownloadState() == Download.DownloadState.DOWNLOAD_STATE_UNSPECIFIED
           || r.getDownloadState() == Download.DownloadState.UNRECOGNIZED) {
-        return "DOWNLOAD_STATE_UNSUPPORTED";
+        return deny("DOWNLOAD_STATE_UNSUPPORTED");
       }
-      if (!r.getEventDigest().getAlgorithm().equals("SHA-256")) return "DIGEST_ALGORITHM_UNSUPPORTED";
-      if (!r.getEventDigest().getValueHex().matches("[0-9a-f]{64}")) return "DIGEST_VALUE_INVALID";
+      if (!r.getEventDigest().getAlgorithm().equals("SHA-256")) {
+        return deny("DIGEST_ALGORITHM_UNSUPPORTED");
+      }
+      if (!r.getEventDigest().getValueHex().matches("[0-9a-f]{64}")) {
+        return deny("DIGEST_VALUE_INVALID");
+      }
       if (r.getDownloadState() == Download.DownloadState.DOWNLOAD_STATE_COMPLETED
           && r.getDownloadedBytes() != r.getTotalBytes()) {
-        return "COMPLETED_BYTES_MISMATCH";
+        return deny("COMPLETED_BYTES_MISMATCH");
       }
       if (r.getDownloadState() == Download.DownloadState.DOWNLOAD_STATE_RESET_OFFSET
           && r.getDownloadedBytes() != r.getResumeOffset()) {
-        return "RESET_OFFSET_BASELINE_MISMATCH";
+        return deny("RESET_OFFSET_BASELINE_MISMATCH");
       }
       return null;
     }
@@ -585,6 +761,10 @@ public class Cr011SemanticsCheck {
   // ===========================================================================
   // helpers
   // ===========================================================================
+
+  private static String deny(String reason) {
+    return denyReasons.require(reason).reason;
+  }
 
   private static Download.DownloadProgressReport.Builder base(String progressId, long seq) {
     return Download.DownloadProgressReport.newBuilder()
@@ -624,6 +804,12 @@ public class Cr011SemanticsCheck {
     } catch (Exception e) {
       throw new IllegalStateException(e);
     }
+  }
+
+  private static void expectDeny(String label, AcceptResult r, Disposition disposition,
+      boolean accepted, long latestSeq, String denyReason) {
+    expect(label, r, disposition, accepted, latestSeq);
+    check(label + " [registered deny_reason]", denyReason.equals(r.denyReason));
   }
 
   private static void expect(String label, AcceptResult r, Disposition disposition,

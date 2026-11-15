@@ -6,7 +6,6 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -28,6 +27,7 @@ import vehicle.fota.v1.Types;
  *   fota_download_reset_offset.bin            DownloadState.RESET_OFFSET (non-zero authorized baseline)
  *   fota_download_unknown_enum.bin            unknown DownloadState value 99 (wire retention)
  *   fota_download_unknown_field.bin           unknown field 999 (wire retention)
+ *   fota_download_uint64_high_bit.bin         downloaded_bytes = 2^64-1 (Java long -1)
  *   fota_download_response_current.bin        DownloadProgressDisposition.CURRENT
  *   fota_download_response_late.bin           LATE_OBSERVATION
  *   fota_download_response_duplicate.bin      DUPLICATE
@@ -86,7 +86,15 @@ public class Cr011GoldenProducer {
     write(outDir.resolve("fota_download_completed.bin"), completed.toByteArray());
     write(outDir.resolve("fota_download_reset_offset.bin"), resetOffset.toByteArray());
     write(outDir.resolve("fota_download_unknown_enum.bin"), unknownEnum.toByteArray());
+    // Java long -1 is the uint64 wire value 0xFFFFFFFFFFFFFFFF. Both Java and
+    // C++ acceptance layers must reject it before snapshot/percentage handling.
+    Download.DownloadProgressReport uint64HighBit = report("DP-7", 1, 6)
+        .setDownloadState(Download.DownloadState.DOWNLOAD_STATE_PROGRESS)
+        .setDownloadedBytes(-1L).setResumeOffset(0).setEtag("etag-1")
+        .build();
+
     write(outDir.resolve("fota_download_unknown_field.bin"), unknownField.toByteArray());
+    write(outDir.resolve("fota_download_uint64_high_bit.bin"), uint64HighBit.toByteArray());
 
     // ---- response goldens (disposition matrix, §6.3) ------------------------
     Download.DownloadProgressResponse current = response(true,
@@ -160,6 +168,7 @@ public class Cr011GoldenProducer {
       "fota_download_reset_offset.bin",
       "fota_download_unknown_enum.bin",
       "fota_download_unknown_field.bin",
+      "fota_download_uint64_high_bit.bin",
       "fota_download_response_current.bin",
       "fota_download_response_late.bin",
       "fota_download_response_duplicate.bin",
@@ -228,9 +237,23 @@ public class Cr011GoldenProducer {
     try (Stream<Path> walk = Files.walk(root)) {
       return walk.filter(p -> p.toString().endsWith(".proto"))
           .map(p -> root.relativize(p).toString().replace('\\', '/'))
-          .sorted(Comparator.naturalOrder())
+          .sorted(Cr011GoldenProducer::compareUtf8)
           .collect(Collectors.toList());
     }
+  }
+
+  /** Unsigned UTF-8 byte ordering; relative paths contain no ./ prefix and use '/' separators. */
+  private static int compareUtf8(String left, String right) {
+    byte[] a = left.getBytes(StandardCharsets.UTF_8);
+    byte[] b = right.getBytes(StandardCharsets.UTF_8);
+    int length = Math.min(a.length, b.length);
+    for (int i = 0; i < length; i++) {
+      int comparison = Integer.compare(Byte.toUnsignedInt(a[i]), Byte.toUnsignedInt(b[i]));
+      if (comparison != 0) {
+        return comparison;
+      }
+    }
+    return Integer.compare(a.length, b.length);
   }
 
   /** fotaSourceAggregateSha256 = SHA-256 over UTF8(path) || 0x00 || hex(fileSha256) || 0x0A. */

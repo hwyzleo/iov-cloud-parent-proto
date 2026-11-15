@@ -476,9 +476,12 @@ cr010_extension:
 # CURRENT canonical source/descriptor/golden state after CR-011.
 #
 # fota_source_aggregate_sha256 (SPEC design §11): all official FOTA protos sorted
-# by UTF-8 lexicographic relative path, each encoded as
+# by unsigned UTF-8 bytes of their POSIX relative path (no ./ prefix, '/' only),
+# each encoded as
 #   UTF8(relativePath) || 0x00 || ASCII(lowercaseFileSha256Hex) || 0x0A,
-# then SHA-256 over the concatenation (no absolute paths, no host separators).
+# then SHA-256 over the concatenation (no absolute paths or host separators).
+# Downstream IOV-OTA guards consume this value verbatim; no alternate ordering
+# or raw-content concat is permitted.
 # Current set = consent, download, execution, log, package, policy, reconcile,
 # task, types (9 files).
 cr011_extension:
@@ -509,10 +512,13 @@ cr011_extension:
   release_set: [PAR-PROTO, VEH-PROTO/CGW-FOTA, VAGW, IOV-OTA]
   rollback: whole release-set only (SPEC design §12.2); history facts are never deleted
   semantics_reference_model: verify/Cr011SemanticsCheck.java
+  deny_reason_registry: verify/download-deny-reasons.json
+  deny_reason_registry_sha256: b5146258243bfd820ba2c1355b9bfe2c323ed83f044eb49643284f48800c125e
+  deny_reason_count: 20
   contract_check: verify/FotaContractCheck.java
   golden_producer: verify/Cr011GoldenProducer.java
   golden_manifest: verify/golden/manifest-cr011.json
-  golden_manifest_sha256: c0f7ac8e4e8e2db4aa0c5c5f7d0faea3c841cafc5b2bba92944e42815f746712
+  golden_manifest_sha256: e59777fba3e7b61bc1f9eda44eba369914388f7cee433ab741412a27a409477d
   golden_reference:
     producer: java (protoc 3.25.5 / protobuf-java 3.25.5)
     location: verify/golden/expected/
@@ -523,6 +529,7 @@ cr011_extension:
       fota_download_reset_offset.bin: { sha256: 052db0b0353c00b8f284583fb3e05ea2f607b7f3fd1fe6bbb58af4bab74b2c1d, bytes: 144 }
       fota_download_unknown_enum.bin: { sha256: fa2c8d56b4a60aedc57f18516a614f00282387e309516b6530ab3d135bd0e97b, bytes: 140 }
       fota_download_unknown_field.bin: { sha256: fef3e51b895436d3d9a13401a1a995e4a8356f2a03a17c2eabb846a07388bd22, bytes: 144 }
+      fota_download_uint64_high_bit.bin: { sha256: d3cee60c8e294ef329b31cf0ad5ce0c5a0445ee97789fbe386139f8b56729eb2, bytes: 147 }
       fota_download_response_current.bin: { sha256: 49383aa6ffcf90a4bae0b2e3a6df67a77e2eda30ae1bfec010fd58c531883aa7, bytes: 18 }
       fota_download_response_late.bin: { sha256: 2593c6add33e7e22828aee27579cf3ec3fbd3ff98217a175caea6b846e52f59e, bytes: 18 }
       fota_download_response_duplicate.bin: { sha256: c1ed7edf3b0429e3ca9a096e1204ca0ec9f8abcb0c4c2a81c9b25a02295ec475, bytes: 18 }
