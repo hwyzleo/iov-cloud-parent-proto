@@ -5,6 +5,7 @@ import java.io.FileInputStream;
 import java.util.HashMap;
 import java.util.Map;
 
+import vehicle.fota.v1.Download;
 import vehicle.fota.v1.Execution;
 import vehicle.fota.v1.Task;
 import vehicle.fota.v1.Types;
@@ -34,6 +35,7 @@ public class FotaContractCheck {
     DescriptorProtos.FileDescriptorProto file = findFile(set, "vehicle/fota/v1/types.proto");
     DescriptorProtos.FileDescriptorProto taskFile = findFile(set, "vehicle/fota/v1/task.proto");
     DescriptorProtos.FileDescriptorProto execFile = findFile(set, "vehicle/fota/v1/execution.proto");
+    DescriptorProtos.FileDescriptorProto downloadFile = findFile(set, "vehicle/fota/v1/download.proto");
 
     // ---- EcuSoftwareModel enum (design §3.1) --------------------------------
     DescriptorProtos.EnumDescriptorProto model = findEnum(file, "EcuSoftwareModel");
@@ -161,6 +163,106 @@ public class FotaContractCheck {
       {4, "software_target_code", 9, 1}, {5, "slot", 9, 1},
     });
 
+    // ================= CR-011 download progress (additive-only) ==============
+    // PAR-PROTO-DSN-CR-011 §3/§4/§8: download.proto is a pure addition. Package,
+    // dependency set, messages, fields and enums are frozen here; no existing
+    // message/field/enum of the other eight FOTA files is touched.
+    check("CR-011: download.proto package == vehicle.fota.v1",
+        downloadFile.getPackage().equals("vehicle.fota.v1"));
+    check("CR-011: download.proto imports exactly vehicle/fota/v1/types.proto",
+        downloadFile.getDependencyCount() == 1
+            && downloadFile.getDependency(0).equals("vehicle/fota/v1/types.proto"));
+    check("CR-011: download.proto defines exactly 2 messages (additive-only)",
+        downloadFile.getMessageTypeCount() == 2);
+    check("CR-011: download.proto defines exactly 2 enums (additive-only)",
+        downloadFile.getEnumTypeCount() == 2);
+    check("CR-011: download.proto defines no service", downloadFile.getServiceCount() == 0);
+
+    DescriptorProtos.DescriptorProto cr011Report = findMessage(downloadFile, "DownloadProgressReport");
+    check("CR-011: DownloadProgressReport has 15 fields (1..15)", cr011Report.getFieldCount() == 15);
+    checkFields("DownloadProgressReport", cr011Report, new Object[][] {
+      {1, "progress_id", 9, 0}, {2, "vehicle_task_id", 9, 0}, {3, "package_id", 9, 0},
+      {4, "package_revision", 9, 0}, {5, "download_attempt_no", 13 /* UINT32 */, 0},
+      {6, "progress_seq", 4 /* UINT64 */, 0}, {7, "download_state", 14 /* ENUM */, 0},
+      {8, "downloaded_bytes", 4, 0}, {9, "total_bytes", 4, 0}, {10, "resume_offset", 4, 0},
+      {11, "occurred_at_ms", 3 /* INT64 */, 0}, {12, "event_digest", 11, 0},
+      {13, "error_code", 9, 1}, {14, "failure_reason", 9, 1}, {15, "etag", 9, 1},
+    });
+    check("CR-011: DownloadProgressReport#12 type .vehicle.fota.v1.Digest",
+        fieldTypeName(cr011Report, 12).equals(".vehicle.fota.v1.Digest"));
+    check("CR-011: DownloadProgressReport#7 type .vehicle.fota.v1.DownloadState",
+        fieldTypeName(cr011Report, 7).equals(".vehicle.fota.v1.DownloadState"));
+    check("CR-011: DownloadProgressReport carries no progress_percent",
+        cr011Report.getFieldList().stream().noneMatch(f -> f.getName().equals("progress_percent")));
+
+    DescriptorProtos.DescriptorProto cr011Resp = findMessage(downloadFile, "DownloadProgressResponse");
+    check("CR-011: DownloadProgressResponse has 5 fields (1..5)", cr011Resp.getFieldCount() == 5);
+    checkFields("DownloadProgressResponse", cr011Resp, new Object[][] {
+      {1, "status", 11, 0}, {2, "accepted", 8 /* BOOL */, 0},
+      {3, "disposition", 14, 0}, {4, "latest_accepted_progress_seq", 4, 0},
+      {5, "deny_reason", 9, 1},
+    });
+    check("CR-011: DownloadProgressResponse#1 type .vehicle.fota.v1.ResponseStatus",
+        fieldTypeName(cr011Resp, 1).equals(".vehicle.fota.v1.ResponseStatus"));
+    check("CR-011: DownloadProgressResponse#3 type .vehicle.fota.v1.DownloadProgressDisposition",
+        fieldTypeName(cr011Resp, 3).equals(".vehicle.fota.v1.DownloadProgressDisposition"));
+    check("CR-011: DownloadProgressResponse carries no deny_code",
+        cr011Resp.getFieldList().stream().noneMatch(f -> f.getName().equals("deny_code")));
+
+    checkEnum(downloadFile, "DownloadState", new String[] {
+      "DOWNLOAD_STATE_UNSPECIFIED", "DOWNLOAD_STATE_STARTED", "DOWNLOAD_STATE_PROGRESS",
+      "DOWNLOAD_STATE_PAUSED", "DOWNLOAD_STATE_RESUMED", "DOWNLOAD_STATE_RESET_OFFSET",
+      "DOWNLOAD_STATE_FAILED", "DOWNLOAD_STATE_COMPLETED"});
+    checkEnum(downloadFile, "DownloadProgressDisposition", new String[] {
+      "DOWNLOAD_PROGRESS_DISPOSITION_UNSPECIFIED", "DOWNLOAD_PROGRESS_DISPOSITION_CURRENT",
+      "DOWNLOAD_PROGRESS_DISPOSITION_LATE_OBSERVATION", "DOWNLOAD_PROGRESS_DISPOSITION_DUPLICATE",
+      "DOWNLOAD_PROGRESS_DISPOSITION_CONFLICT", "DOWNLOAD_PROGRESS_DISPOSITION_REJECTED"});
+
+    // generated Java descriptor == committed DescriptorSet (no drift)
+    check("CR-011: generated Download.DownloadProgressReport matches descriptor",
+        stripJsonName(Download.DownloadProgressReport.getDescriptor().toProto())
+            .equals(stripJsonName(cr011Report)));
+    check("CR-011: generated Download.DownloadProgressResponse matches descriptor",
+        stripJsonName(Download.DownloadProgressResponse.getDescriptor().toProto())
+            .equals(stripJsonName(cr011Resp)));
+    check("CR-011: generated DownloadState resolves RESET_OFFSET=5 / COMPLETED=7",
+        Download.DownloadState.DOWNLOAD_STATE_RESET_OFFSET.getNumber() == 5
+            && Download.DownloadState.DOWNLOAD_STATE_COMPLETED.getNumber() == 7);
+    check("CR-011: generated DownloadProgressDisposition resolves CURRENT=1 / REJECTED=5",
+        Download.DownloadProgressDisposition.DOWNLOAD_PROGRESS_DISPOSITION_CURRENT.getNumber() == 1
+            && Download.DownloadProgressDisposition.DOWNLOAD_PROGRESS_DISPOSITION_REJECTED.getNumber() == 5);
+
+    // additive-only regression: the descriptor set still carries exactly the
+    // eight pre-CR-011 FOTA files plus download.proto, and no old file was dropped.
+    java.util.Set<String> fotaFiles = new java.util.HashSet<>();
+    for (DescriptorProtos.FileDescriptorProto f : set.getFileList()) {
+      if (f.getName().startsWith("vehicle/fota/v1/")) {
+        fotaFiles.add(f.getName());
+      }
+    }
+    check("CR-011: FOTA descriptor set holds exactly 9 files (8 pre-existing + download)",
+        fotaFiles.size() == 9
+            && fotaFiles.contains("vehicle/fota/v1/consent.proto")
+            && fotaFiles.contains("vehicle/fota/v1/download.proto")
+            && fotaFiles.contains("vehicle/fota/v1/execution.proto")
+            && fotaFiles.contains("vehicle/fota/v1/log.proto")
+            && fotaFiles.contains("vehicle/fota/v1/package.proto")
+            && fotaFiles.contains("vehicle/fota/v1/policy.proto")
+            && fotaFiles.contains("vehicle/fota/v1/reconcile.proto")
+            && fotaFiles.contains("vehicle/fota/v1/task.proto")
+            && fotaFiles.contains("vehicle/fota/v1/types.proto"));
+
+    // optional presence tri-state on the new fields
+    Download.DownloadProgressReport noOptional = Download.DownloadProgressReport.newBuilder()
+        .setProgressId("P").setVehicleTaskId("V").setPackageId("K").setPackageRevision("R")
+        .setDownloadAttemptNo(1).setProgressSeq(1).setTotalBytes(1).build();
+    Download.DownloadProgressReport withOptional = noOptional.toBuilder()
+        .setErrorCode("E").setFailureReason("F").setEtag("T").build();
+    check("CR-011: optional error_code/failure_reason/etag absent -> has*=false",
+        !noOptional.hasErrorCode() && !noOptional.hasFailureReason() && !noOptional.hasEtag());
+    check("CR-011: optional error_code/failure_reason/etag present -> has*=true",
+        withOptional.hasErrorCode() && withOptional.hasFailureReason() && withOptional.hasEtag());
+
     // ---- generated class resolution ------------------------------------------
     Descriptors.FileDescriptor fd = Descriptors.FileDescriptor.buildFrom(file,
         new Descriptors.FileDescriptor[0]);
@@ -249,7 +351,7 @@ public class FotaContractCheck {
 
     System.out.println();
     if (failures == 0) {
-      System.out.println("✅ FOTA CONTRACT CHECK PASSED (old fields intact + CR-005 additions + tri-state + compat)");
+      System.out.println("✅ FOTA CONTRACT CHECK PASSED (old fields intact + CR-005 additions + CR-011 download + tri-state + compat)");
       System.exit(0);
     } else {
       System.out.println("❌ " + failures + " FOTA contract check failure(s)");
@@ -283,6 +385,22 @@ public class FotaContractCheck {
     }
     fail("message " + name + " not found");
     throw new IllegalStateException(name);
+  }
+
+  private static void checkEnum(DescriptorProtos.FileDescriptorProto file, String name,
+      String[] expected) {
+    DescriptorProtos.EnumDescriptorProto e = findEnum(file, name);
+    boolean ok = e.getValueCount() == expected.length;
+    if (ok) {
+      for (int i = 0; i < expected.length; i++) {
+        if (!e.getValue(i).getName().equals(expected[i]) || e.getValue(i).getNumber() != i) {
+          ok = false;
+          fail("enum " + name + " value #" + i + " mismatch: "
+              + e.getValue(i).getName() + "=" + e.getValue(i).getNumber());
+        }
+      }
+    }
+    check("CR-011: enum " + name + " values = " + String.join(", ", expected), ok);
   }
 
   private static boolean fieldOk(DescriptorProtos.DescriptorProto msg, int number,

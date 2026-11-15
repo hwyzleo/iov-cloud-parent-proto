@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package vehicle.fota.v1;
+
+import "vehicle/fota/v1/types.proto";
+
+option cc_enable_arenas = true;
+
+// =============================================================================
+// vehicle.fota.v1 download - 下载过程进度观测 (PAR-PROTO-DSN-CR-011 / SPEC §6.5)
+// =============================================================================
+// SSOT：本文件由 PAR-PROTO native 定义（canonical 权威），以纯追加方式引入，
+// 不改动既有 message/字段号/类型/presence/package，protocol_version=fota-v1
+// 不变；VEH-PROTO 按 release 单向同步生成 C++，IOV-OTA 使用同一 release 的
+// Java 生成类消费，VAGW 只透传 payload bytes 且不引入本文件。
+//
+// 方向与路由（family=DOWNLOAD_PROGRESS，仅 registry/provenance 元数据）：
+//   DownloadProgressReport   INBOUND/REQUEST   车端 → VAGW → IOV-OTA  上行 vagw.fota
+//   DownloadProgressResponse OUTBOUND/RESPONSE IOV-OTA → VAGW → 车端  下行 ota.fota
+// 共用 service=vehicle.fota、protocol_version=fota-v1，payload_type 为完整
+// message name；payload 仍只进入 VehicleMessageEnvelope 字段 10；Response
+// Envelope.correlation_id 关联 Report Envelope.message_id。
+//
+// 语义边界（详见 SPEC §6.5.2/§6.5.3）：
+//   - progress_id 是全局第一幂等键；同 ID 同 event_digest 复用首次业务结果，
+//     同 ID 异摘要为 CONFLICT；第二唯一键为
+//     (vehicle_task_id, package_id, download_attempt_no, progress_seq)，
+//     不同 progress_id 撞上该键一律 CONFLICT。
+//   - 只有更高且合法的 progress_seq 才推进当前快照；较旧但合法的新 ID 作为
+//     LATE_OBSERVATION 历史保存，不成为当前。
+//   - 非 RESET_OFFSET 的更高 seq 不得使 downloaded_bytes/resume_offset 回退；
+//     RESET_OFFSET 中 downloaded_bytes == resume_offset 并建立新基线，0 永远
+//     合法，非零基线只接受同一 package_revision + etag 下 DownloadGrant 明确
+//     授权的 current_offset_bytes，且对应 resume_allowed=true。
+//   - occurred_at_ms == 0 表示未知，负值非法，禁止云端 receivedAt 回填。
+//   - COMPLETED 仅表示对象字节下载完成（downloaded_bytes == total_bytes）；
+//     VERIFY/DECRYPT 仍由 StageResultReport 表达，下载进度不创建 Execution、
+//     不进入 Execution 事件水位、不推进 READY_TO_INSTALL。
+//   - 百分比由云端按 downloaded_bytes/total_bytes 计算，协议不承载
+//     progress_percent；拒绝原因只进入 deny_reason 与低基数指标，不新增 deny_code。
+// =============================================================================
+
+// 下载进度上报（车→云）。
+message DownloadProgressReport {
+  string progress_id = 1;             // 全局第一幂等键
+  string vehicle_task_id = 2;
+  string package_id = 3;
+  string package_revision = 4;
+  uint32 download_attempt_no = 5;     // 从 1 开始，独立于 Execution attempt
+  uint64 progress_seq = 6;            // 从 1 开始，单调递增
+  DownloadState download_state = 7;
+  uint64 downloaded_bytes = 8;
+  uint64 total_bytes = 9;             // > 0
+  uint64 resume_offset = 10;          // 0 <= resume_offset <= downloaded_bytes
+  int64 occurred_at_ms = 11;          // 0=未知；负值非法
+  Digest event_digest = 12;           // algorithm=SHA-256，value_hex=64 位小写 hex
+  optional string error_code = 13;
+  optional string failure_reason = 14;
+  optional string etag = 15;
+}
+
+// 下载状态（UNSPECIFIED 或未知值在业务层 fail-closed 为 REJECTED）。
+enum DownloadState {
+  DOWNLOAD_STATE_UNSPECIFIED = 0;
+  DOWNLOAD_STATE_STARTED = 1;
+  DOWNLOAD_STATE_PROGRESS = 2;
+  DOWNLOAD_STATE_PAUSED = 3;
+  DOWNLOAD_STATE_RESUMED = 4;
+  DOWNLOAD_STATE_RESET_OFFSET = 5;
+  DOWNLOAD_STATE_FAILED = 6;
+  DOWNLOAD_STATE_COMPLETED = 7;
+}
+
+// 下载进度受理结果（云→车）。
+message DownloadProgressResponse {
+  ResponseStatus status = 1;
+  bool accepted = 2;
+  DownloadProgressDisposition disposition = 3;
+  uint64 latest_accepted_progress_seq = 4;  // CURRENT=本次 seq；其余取当前快照；DUPLICATE 复用首次
+  optional string deny_reason = 5;
+}
+
+// 受理处置（不新增 deny_code；拒绝原因只进入 deny_reason）。
+enum DownloadProgressDisposition {
+  DOWNLOAD_PROGRESS_DISPOSITION_UNSPECIFIED = 0;
+  DOWNLOAD_PROGRESS_DISPOSITION_CURRENT = 1;
+  DOWNLOAD_PROGRESS_DISPOSITION_LATE_OBSERVATION = 2;
+  DOWNLOAD_PROGRESS_DISPOSITION_DUPLICATE = 3;
+  DOWNLOAD_PROGRESS_DISPOSITION_CONFLICT = 4;
+  DOWNLOAD_PROGRESS_DISPOSITION_REJECTED = 5;
+}

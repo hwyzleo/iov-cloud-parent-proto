@@ -1,0 +1,46 @@
+{
+  "cr": "PAR-PROTO-DSN-CR-011",
+  "contract": "vehicle/fota/v1/download.proto",
+  "package": "vehicle.fota.v1",
+  "protocol_version": "fota-v1",
+  "service": "vehicle.fota",
+  "family": "DOWNLOAD_PROGRESS",
+  "release_set": ["PAR-PROTO", "VEH-PROTO/CGW-FOTA", "VAGW", "IOV-OTA"],
+  "directions": [
+    {"payload_type": "vehicle.fota.v1.DownloadProgressReport", "direction": "INBOUND", "message_kind": "REQUEST", "topic": "vagw.fota"},
+    {"payload_type": "vehicle.fota.v1.DownloadProgressResponse", "direction": "OUTBOUND", "message_kind": "RESPONSE", "topic": "ota.fota"}
+  ],
+  "source": {
+    "root": "iov-cloud-proto-fota/src/main/proto",
+    "files": {
+      "vehicle/fota/v1/consent.proto": "03298061e2594b157f23e63bb33e7cb054518d0e42a517ff4e7f0ef6798c60b6",
+      "vehicle/fota/v1/download.proto": "2a15fa8f63f9d96a3444028d108f2eaab7cf2b3290631f963a83975629bf9612",
+      "vehicle/fota/v1/execution.proto": "89704e71f99a0cd71dc8a4085184cabfb192645dbb3616a1a6bfa78f7dd53124",
+      "vehicle/fota/v1/log.proto": "dd2f567abe2560ef672a70fc0e1a7ad1699f2952246a3a6f89fb6dcaba3a2f21",
+      "vehicle/fota/v1/package.proto": "ee87e51289ae9a080054e8d2da5a2eba2865b02b11fce3fde2f57e644a37e53d",
+      "vehicle/fota/v1/policy.proto": "3f3848085d57b6bed195641a7c54fd281329a5a300be552a6e58691c711cb503",
+      "vehicle/fota/v1/reconcile.proto": "851f870672de8ccb4447f0f75ee94366bf5bde0f8ee371e02359961ccdfe0dd8",
+      "vehicle/fota/v1/task.proto": "7da10ac9bb7a425aa35a2fc9d2592a12f7f17168ecb0acbfa19c654d8f6e0121",
+      "vehicle/fota/v1/types.proto": "c1b51e58a7dd0cc32a9354fa7b6751261e2c1070835a1cebd203a2dfe0d5f3ce"
+    },
+    "fota_source_aggregate_sha256": "707eb598c698b5ceae73c54832ddb5f932b7d3322be966d8220d4a6454603a95"
+  },
+  "descriptor": {
+    "path": "descriptors/vehicle-fota-v1.pb",
+    "sha256": "e45b65166c16b9f8a67b92ffc14374388f647a1101f758d68c3eeabd73dabdc2"
+  },
+  "toolchain": {"protoc": "3.25.5", "protobuf_java": "3.25.5", "buf": "1.72.0", "maven": "3.9.14", "jdk": "17"},
+  "golden": [
+    {"file": "fota_download_started.bin", "bytes": 136, "sha256": "0ac10a0810d2612f196026a65cacea8d922dea919b96f0809ebf3aaf4d8f6677"},
+    {"file": "fota_download_progress.bin", "bytes": 140, "sha256": "67e582235f61d57103a9def7172cf8ccc2665aa3f59c08c16fd2918f2448cb66"},
+    {"file": "fota_download_completed.bin", "bytes": 140, "sha256": "75948932612ed9b94d7fe19ea352fb019538e3ebc18781f7fc22c8be1b36f9e7"},
+    {"file": "fota_download_reset_offset.bin", "bytes": 144, "sha256": "052db0b0353c00b8f284583fb3e05ea2f607b7f3fd1fe6bbb58af4bab74b2c1d"},
+    {"file": "fota_download_unknown_enum.bin", "bytes": 140, "sha256": "fa2c8d56b4a60aedc57f18516a614f00282387e309516b6530ab3d135bd0e97b"},
+    {"file": "fota_download_unknown_field.bin", "bytes": 144, "sha256": "fef3e51b895436d3d9a13401a1a995e4a8356f2a03a17c2eabb846a07388bd22"},
+    {"file": "fota_download_response_current.bin", "bytes": 18, "sha256": "49383aa6ffcf90a4bae0b2e3a6df67a77e2eda30ae1bfec010fd58c531883aa7"},
+    {"file": "fota_download_response_late.bin", "bytes": 18, "sha256": "2593c6add33e7e22828aee27579cf3ec3fbd3ff98217a175caea6b846e52f59e"},
+    {"file": "fota_download_response_duplicate.bin", "bytes": 18, "sha256": "c1ed7edf3b0429e3ca9a096e1204ca0ec9f8abcb0c4c2a81c9b25a02295ec475"},
+    {"file": "fota_download_response_conflict.bin", "bytes": 37, "sha256": "17ece7b62b1fa6e42bc0ba26f7c5666223dd520a4b30bd1d22b87f279df74719"},
+    {"file": "fota_download_response_rejected.bin", "bytes": 32, "sha256": "fc18beebf73d68d82ff3a31eda62ef9e4d8bc7383a9dda3b8a0a465e934471a0"}
+  ]
+}

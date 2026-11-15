@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# run_verify.sh — PAR-PROTO-DSN-CR-002/003/004/005/006 verification harness
+# run_verify.sh — PAR-PROTO-DSN-CR-002..011 verification harness
 #
 # Reproduces the release gates runnable here:
 #   1. Maven reactor build (Java generation)            — gate 5 (Java)
@@ -40,6 +40,14 @@
 #   22. CR-010 Java reference model (pure decision functions 57/57 + CI report
 #        {case_id, input_hash, expected_hash, actual_action, counters, pass})
 #                                                        - CR-010 §8.6.4
+#   23. CR-011 download-progress golden producer + manifest/provenance hash
+#        (STARTED/PROGRESS/COMPLETED/RESET_OFFSET/unknown enum/unknown field +
+#         CURRENT/LATE_OBSERVATION/DUPLICATE/CONFLICT/REJECTED, source aggregate,
+#         DescriptorSet, old golden bytes zero-change)     - CR-011 §7/§8, §11
+#   24. CR-011 download acceptance semantics reference model (legality, idempotency,
+#        second unique key, current/late, byte monotonicity, RESET_OFFSET,
+#        object boundary, completion boundary, sampling, time, unknown enum)
+#                                                        - CR-011 §6/§11
 #   (buf breaking runs in CI against the previous release tag — first release
 #    establishes an empty baseline and is documented in provenance.)
 #
@@ -51,7 +59,7 @@ ROOT=$(pwd)
 PB_JAR="${HOME}/.m2/repository/com/google/protobuf/protobuf-java/3.25.5/protobuf-java-3.25.5.jar"
 FAILURES=0
 
-step()  { echo; echo "━━━ [$1/22] $2 ━━━"; }
+step()  { echo; echo "━━━ [$1/24] $2 ━━━"; }
 fail()  { echo "  ✗ $1"; FAILURES=$((FAILURES+1)); }
 pass()  { echo "  ✓ $1"; }
 
@@ -136,7 +144,17 @@ shasum -a 256 \
 grep -q "5b6dbb6b981a95a98e06394f21f3b13a5ee52f1214b61c6cb02f56fd37932e6d" /tmp/cr002_checksums.txt && pass "common source sha256 matches manifest" || fail "common source sha256 mismatch"
 grep -q "4ba4c1470270b16a44f30ce3bfff2062a703c0c88ac56bf89925a810651bc200" /tmp/cr002_checksums.txt && pass "common descriptor sha256 matches manifest" || fail "common descriptor sha256 mismatch"
 # CR-005: fota descriptor hash updated (field append); donor bootstrap hash stays historical.
-grep -q "8eb241c987e7b1546c15c76be3fcb67331e9d553af2ac8a28a7d0c8cd36c8908" /tmp/cr002_checksums.txt && pass "fota descriptor sha256 matches cr005_extension" || fail "fota descriptor sha256 mismatch"
+# CR-011: the current canonical FOTA DescriptorSet further adds download.proto, so the
+# authoritative hash is cr011_extension.fota_descriptor_sha256 (8eb241c9… in
+# cr005_extension stays as the historical pre-CR-011 value — never rewritten).
+grep -q "e45b65166c16b9f8a67b92ffc14374388f647a1101f758d68c3eeabd73dabdc2" /tmp/cr002_checksums.txt && pass "fota descriptor sha256 matches cr011_extension" || fail "fota descriptor sha256 mismatch"
+# CR-011: download.proto source hash (pure additive contract file)
+shasum -a 256 iov-cloud-proto-fota/src/main/proto/vehicle/fota/v1/download.proto \
+  > /tmp/cr011_checksums.txt
+grep -q "2a15fa8f63f9d96a3444028d108f2eaab7cf2b3290631f963a83975629bf9612" /tmp/cr011_checksums.txt && pass "download.proto sha256 matches cr011_extension" || fail "download.proto sha256 mismatch"
+# CR-011: golden manifest self hash (records source aggregate + descriptor + every golden)
+shasum -a 256 verify/golden/manifest-cr011.json >> /tmp/cr011_checksums.txt
+grep -q "c0f7ac8e4e8e2db4aa0c5c5f7d0faea3c841cafc5b2bba92944e42815f746712" /tmp/cr011_checksums.txt && pass "golden manifest-cr011.json sha256 matches cr011_extension" || fail "golden manifest-cr011.json sha256 mismatch"
 # ---- CR-003: vagw source + descriptor (cloud_artifacts section) -----------
 shasum -a 256 \
   iov-cloud-proto-vagw/src/main/proto/vagw/v1/delivery.proto \
@@ -171,7 +189,7 @@ if [ -x "$PROTOC" ]; then
     --descriptor_set_out=/tmp/fota-regenerated.pb --include_imports \
     vehicle/fota/v1/types.proto vehicle/fota/v1/task.proto vehicle/fota/v1/consent.proto \
     vehicle/fota/v1/package.proto vehicle/fota/v1/execution.proto vehicle/fota/v1/log.proto \
-    vehicle/fota/v1/reconcile.proto vehicle/fota/v1/policy.proto
+    vehicle/fota/v1/reconcile.proto vehicle/fota/v1/policy.proto vehicle/fota/v1/download.proto
   "$PROTOC" -I iov-cloud-proto-vagw/src/main/proto \
     --descriptor_set_out=/tmp/vagw-regenerated.pb --include_imports \
     vagw/v1/delivery.proto
@@ -496,6 +514,73 @@ if [ -f "$PB_JAR" ]; then
     fi
   else
     fail "CR-010 lifecycle vector check failed (reference model diverged or bundle tampered)"
+  fi
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 23. CR-011 download progress golden producer (§7/§8, §11) ------------
+step 23 "CR-011 download progress golden producer (report states + disposition matrix)"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/golden/expected verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes" \
+    -d verify/out verify/Cr011GoldenProducer.java
+  java -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes:verify/out" \
+    Cr011GoldenProducer
+  pass "CR-011 golden bytes + verify/golden/manifest-cr011.json produced"
+  # manifest is deterministic; its hash pins source aggregate + descriptor + goldens
+  if [ "$(shasum -a 256 verify/golden/manifest-cr011.json | cut -d' ' -f1)" = \
+       "c0f7ac8e4e8e2db4aa0c5c5f7d0faea3c841cafc5b2bba92944e42815f746712" ]; then
+    pass "manifest-cr011.json sha256 == c0f7ac8e… (source aggregate + descriptor + goldens frozen)"
+  else
+    fail "manifest-cr011.json sha256 differs (source/descriptor/golden drift)"
+  fi
+  grep -q '"fota_source_aggregate_sha256": "707eb598c698b5ceae73c54832ddb5f932b7d3322be966d8220d4a6454603a95"' \
+    verify/golden/manifest-cr011.json \
+    && pass "fota source aggregate sha256 == 707eb598… (9 FOTA protos, sorted relative paths)" \
+    || fail "fota source aggregate sha256 differs from cr011_extension"
+  grep -q '"sha256": "e45b65166c16b9f8a67b92ffc14374388f647a1101f758d68c3eeabd73dabdc2"' \
+    verify/golden/manifest-cr011.json \
+    && pass "manifest descriptor sha256 == committed descriptors/vehicle-fota-v1.pb" \
+    || fail "manifest descriptor sha256 differs from committed DescriptorSet"
+  shasum -a 256 verify/golden/expected/fota_download_*.bin > /tmp/cr011_golden_checksums.txt
+  grep -q "0ac10a0810d2612f196026a65cacea8d922dea919b96f0809ebf3aaf4d8f6677" /tmp/cr011_golden_checksums.txt \
+    && grep -q "67e582235f61d57103a9def7172cf8ccc2665aa3f59c08c16fd2918f2448cb66" /tmp/cr011_golden_checksums.txt \
+    && grep -q "75948932612ed9b94d7fe19ea352fb019538e3ebc18781f7fc22c8be1b36f9e7" /tmp/cr011_golden_checksums.txt \
+    && grep -q "052db0b0353c00b8f284583fb3e05ea2f607b7f3fd1fe6bbb58af4bab74b2c1d" /tmp/cr011_golden_checksums.txt \
+    && grep -q "fa2c8d56b4a60aedc57f18516a614f00282387e309516b6530ab3d135bd0e97b" /tmp/cr011_golden_checksums.txt \
+    && grep -q "fef3e51b895436d3d9a13401a1a995e4a8356f2a03a17c2eabb846a07388bd22" /tmp/cr011_golden_checksums.txt \
+    && grep -q "49383aa6ffcf90a4bae0b2e3a6df67a77e2eda30ae1bfec010fd58c531883aa7" /tmp/cr011_golden_checksums.txt \
+    && grep -q "2593c6add33e7e22828aee27579cf3ec3fbd3ff98217a175caea6b846e52f59e" /tmp/cr011_golden_checksums.txt \
+    && grep -q "c1ed7edf3b0429e3ca9a096e1204ca0ec9f8abcb0c4c2a81c9b25a02295ec475" /tmp/cr011_golden_checksums.txt \
+    && grep -q "17ece7b62b1fa6e42bc0ba26f7c5666223dd520a4b30bd1d22b87f279df74719" /tmp/cr011_golden_checksums.txt \
+    && grep -q "fc18beebf73d68d82ff3a31eda62ef9e4d8bc7383a9dda3b8a0a465e934471a0" /tmp/cr011_golden_checksums.txt \
+    && pass "CR-011 golden hashes match cr011_extension (reports + response matrix)" \
+    || fail "CR-011 golden hashes differ from cr011_extension"
+  # additive-only regression: pre-CR-011 golden bytes must stay byte-identical
+  shasum -a 256 verify/golden/expected/fota_ecu_version_multitarget.bin \
+    verify/golden/expected/fota_taskcheck_canonical_v2.bin \
+    verify/golden/expected/envelope_taskcheck.bin > /tmp/cr011_oldgold.txt
+  grep -q "6ef920ac0b326e4fa151b45a609542341acde6092d61e00db59f07c78f424d00" /tmp/cr011_oldgold.txt \
+    && grep -q "679262822450fe98bf1b8e542bbf37656cecbe2e9222c61bc0c139e284a7d0b0" /tmp/cr011_oldgold.txt \
+    && grep -q "7f260cefd97ef972f64e8b5ece85fb79286eec9b67c87a74ae993b33d257b2c0" /tmp/cr011_oldgold.txt \
+    && pass "pre-CR-011 golden bytes unchanged (additive-only)" \
+    || fail "pre-CR-011 golden bytes changed — CR-011 is not additive"
+else
+  echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
+fi
+
+# ---- 24. CR-011 download acceptance semantics (§6/§11) --------------------
+step 24 "CR-011 download acceptance semantics reference model"
+if [ -f "$PB_JAR" ]; then
+  mkdir -p verify/out
+  javac -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes" \
+    -d verify/out verify/Cr011SemanticsCheck.java
+  if java -cp "$PB_JAR:iov-cloud-proto-vehicle-common/target/classes:iov-cloud-proto-fota/target/classes:verify/out" \
+      Cr011SemanticsCheck; then
+    pass "CR-011 acceptance reference model verified (idempotency/ordering/reset/boundary/sampling/time)"
+  else
+    fail "CR-011 acceptance reference model diverged"
   fi
 else
   echo "  (protobuf-java not in ~/.m2 — run 'mvn install' first)"
